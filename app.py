@@ -892,16 +892,29 @@ HTML = """
         // Clean text for natural speech (remove emojis, symbols, etc.)
         function cleanTextForSpeech(text) {
             // Remove emojis by filtering out characters in emoji ranges
-            let cleaned = text.split('').filter(char => {
-                const code = char.codePointAt(0);
-                // Filter out emoji ranges
-                return !(
+            let cleaned = '';
+            for (let i = 0; i < text.length; i++) {
+                const code = text.codePointAt(i);
+
+                // Skip emoji ranges
+                if (
                     (code >= 0x1F300 && code <= 0x1F9FF) || // Misc Symbols and Pictographs
                     (code >= 0x2600 && code <= 0x26FF) ||   // Misc symbols
                     (code >= 0x2700 && code <= 0x27BF) ||   // Dingbats
-                    (code >= 0x1F1E0 && code <= 0x1F1FF)    // Flags
-                );
-            }).join('');
+                    (code >= 0x1F1E0 && code <= 0x1F1FF) || // Flags
+                    (code >= 0x1F600 && code <= 0x1F64F) || // Emoticons
+                    (code >= 0x1F680 && code <= 0x1F6FF) || // Transport symbols
+                    (code >= 0x2300 && code <= 0x23FF) ||   // Misc Technical
+                    (code >= 0x25A0 && code <= 0x25FF) ||   // Geometric shapes
+                    (code >= 0x2190 && code <= 0x21FF)      // Arrows
+                ) {
+                    // Skip surrogate pairs (emojis use 2 chars)
+                    if (code > 0xFFFF) i++;
+                    continue;
+                }
+
+                cleaned += text[i];
+            }
 
             return cleaned
                 // Remove bullet points and list markers
@@ -911,11 +924,14 @@ HTML = """
                 // Remove standalone numbers at start of lines (list numbers)
                 .replace(/^\d+\.\s+/gm, '')
                 // Remove markdown symbols
-                .replace(/[*_~`]/g, '')
+                .replace(/[*_~`#]/g, '')
                 // Remove extra punctuation
                 .replace(/\.{2,}/g, '.')
+                // Remove parentheses with single chars (often emoji descriptions)
+                .replace(/\([a-zA-Z0-9]\)/g, '')
                 // Clean up spacing around punctuation
-                .replace(/\s+([,.!?])/g, '$1')
+                .replace(/\s+([,.!?:;])/g, '$1')
+                .replace(/([,.!?:;])\s*([,.!?:;])/g, '$1')
                 .trim();
         }
 
@@ -933,28 +949,31 @@ HTML = """
                 const utterance = new SpeechSynthesisUtterance(cleanText);
 
                 // Voice settings for a deeper, more masculine Boston-style voice
-                utterance.rate = 0.95;  // Slightly slower for Boston accent feel
-                utterance.pitch = 0.85; // Lower pitch for masculine voice
+                utterance.rate = 0.9;   // Slower for more natural Boston feel
+                utterance.pitch = 0.8;  // Lower pitch for deeper masculine voice
                 utterance.volume = 1.0;
 
-                // Try to find the best male voice
+                // Try to find the best male US voice
                 const voices = window.speechSynthesis.getVoices();
 
-                // Priority order for voice selection:
-                // 1. Try to find Aaron (male US voice on many systems)
-                // 2. Any US male voice
-                // 3. Any male voice
-                // 4. Any US voice
+                // Priority order for voice selection - prefer US English male voices
                 const preferredVoice =
-                    voices.find(voice => voice.name.includes('Aaron')) ||
-                    voices.find(voice => voice.lang.includes('en-US') && (voice.name.includes('Male') || voice.name.includes('Man'))) ||
-                    voices.find(voice => voice.name.includes('Male') || voice.name.includes('Man')) ||
-                    voices.find(voice => voice.lang.includes('en-US') && voice.name.includes('David')) ||
-                    voices.find(voice => voice.lang.includes('en-US'));
+                    // Try common US male voice names first
+                    voices.find(voice => voice.lang === 'en-US' && voice.name.toLowerCase().includes('david')) ||
+                    voices.find(voice => voice.lang === 'en-US' && voice.name.toLowerCase().includes('aaron')) ||
+                    voices.find(voice => voice.lang === 'en-US' && voice.name.toLowerCase().includes('fred')) ||
+                    voices.find(voice => voice.lang === 'en-US' && voice.name.toLowerCase().includes('bruce')) ||
+                    // Any US male voice
+                    voices.find(voice => voice.lang === 'en-US' && (voice.name.toLowerCase().includes('male') || voice.name.toLowerCase().includes('man'))) ||
+                    // Any US voice (avoid UK voices!)
+                    voices.find(voice => voice.lang === 'en-US' && !voice.name.toLowerCase().includes('female')) ||
+                    voices.find(voice => voice.lang === 'en-US');
 
                 if (preferredVoice) {
                     utterance.voice = preferredVoice;
-                    console.log('Using voice:', preferredVoice.name);
+                    console.log('Using voice:', preferredVoice.name, '- Lang:', preferredVoice.lang);
+                } else {
+                    console.log('No US voice found, using default');
                 }
 
                 window.speechSynthesis.speak(utterance);
