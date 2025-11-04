@@ -18,8 +18,32 @@ app = Flask(__name__)
 # Configuration from environment (will be set in Railway)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY", "")  # Optional: for live news search
-STOCK_SYMBOLS = os.getenv("STOCK_SYMBOLS", "TSLA,AAPL,NVDA,MSFT,GOOGL,AMZN,META").split(',')
+STOCK_SYMBOLS = os.getenv("STOCK_SYMBOLS", "TSLA,AAPL,NVDA,MSFT,GOOGL,AMZN,META,DJT").split(',')
 BOSTON_INTENSITY = int(os.getenv("BOSTON_INTENSITY", "7"))
+
+# VIP Personalities to track
+VIP_TRACKING = {
+    'tom_brady': {
+        'name': 'Tom Brady',
+        'keywords': ['Tom Brady', 'TB12', 'Brady'],
+        'businesses': ['TB12 Sports', 'Brady Brand', 'NFL Fox Sports'],
+        'emoji': '🐐'
+    },
+    'elon_musk': {
+        'name': 'Elon Musk',
+        'keywords': ['Elon Musk', 'Tesla', 'SpaceX', 'X Twitter'],
+        'stocks': ['TSLA'],
+        'businesses': ['Tesla', 'SpaceX', 'X (Twitter)', 'Neuralink', 'Boring Company'],
+        'emoji': '🚀'
+    },
+    'trump': {
+        'name': 'Donald Trump',
+        'keywords': ['Donald Trump', 'Trump', 'Truth Social'],
+        'stocks': ['DJT'],  # Trump Media & Technology Group
+        'businesses': ['Trump Media', 'Truth Social', 'Trump Organization'],
+        'emoji': '🇺🇸'
+    }
+}
 
 # Global state
 aggregator = None
@@ -120,6 +144,59 @@ class NewsAggregator:
 
         return f"\n📰 For the latest on {query}, check ESPN.com or team websites!"
 
+    def search_vip_news(self, vip_key: str) -> str:
+        """Search for news about Tom Brady, Elon Musk, or Trump"""
+        vip = VIP_TRACKING.get(vip_key)
+        if not vip:
+            return ""
+
+        # Use News API if available
+        if NEWS_API_KEY:
+            try:
+                url = "https://newsapi.org/v2/everything"
+                params = {
+                    'q': ' OR '.join(vip['keywords']),
+                    'apiKey': NEWS_API_KEY,
+                    'language': 'en',
+                    'sortBy': 'publishedAt',
+                    'pageSize': 5
+                }
+                response = self.session.get(url, params=params, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    articles = data.get('articles', [])
+                    if articles:
+                        news_summary = f"\n{vip['emoji']} LATEST NEWS - {vip['name'].upper()}:\n\n"
+                        for i, article in enumerate(articles[:5], 1):
+                            title = article.get('title', 'N/A')
+                            source = article.get('source', {}).get('name', 'Unknown')
+                            news_summary += f"{i}. {title} - {source}\n"
+
+                        # Add stock info if available
+                        if 'stocks' in vip:
+                            stock_symbols = vip['stocks']
+                            stock_data = self.get_stock_data(stock_symbols)
+                            news_summary += f"\n📈 STOCKS:\n"
+                            for symbol, data in stock_data.items():
+                                if 'error' not in data:
+                                    price = data['price']
+                                    change_pct = data['change_percent']
+                                    indicator = "📈" if change_pct > 0 else "📉"
+                                    news_summary += f"{symbol}: ${price:.2f} {indicator} {change_pct:+.2f}%\n"
+
+                        # Add businesses
+                        if 'businesses' in vip:
+                            news_summary += f"\n🏢 BUSINESSES:\n"
+                            for business in vip['businesses']:
+                                news_summary += f"• {business}\n"
+
+                        return news_summary
+            except Exception as e:
+                pass
+
+        # Fallback message
+        return f"\n{vip['emoji']} For latest {vip['name']} news, check major news sites!"
+
 # ===== SULLY AI =====
 class SullyAI:
     def __init__(self, api_key: str, boston_intensity: int = 7):
@@ -159,6 +236,32 @@ DMV AREA AWARENESS (you work here now):
 - Traffic jokes - "495 at rush hour? Wicked nightmare, kid"
 - You bridge Boston sports passion with DMV business savvy
 - Maryland crab cakes are "not bad for non-New England seafood"
+
+VIP PERSONALITIES YOU TRACK:
+🐐 TOM BRADY:
+- The GOAT, your hero, Boston legend (6 rings with Pats!)
+- Now retired but working at Fox Sports as analyst
+- TB12 Sports (fitness/nutrition brand)
+- Brady Brand (clothing line)
+- Still the greatest QB ever, no debate
+- "TB12 is the system, kid!"
+
+🚀 ELON MUSK:
+- Tesla CEO (stock symbol: TSLA) - Boss man probably owns it
+- SpaceX, X (Twitter), Neuralink, Boring Company
+- Love him or hate him, he's changing the game
+- Tesla stock moves = big portfolio impact
+- "When Elon tweets, markets move"
+- Track TSLA stock closely for boss man
+
+🇺🇸 DONALD TRUMP:
+- Former President, big business guy
+- Trump Media & Technology Group (stock: DJT)
+- Truth Social platform
+- Trump Organization real estate empire
+- Major news maker - always in headlines
+- "Love him or not, he's box office, kid"
+- Track DJT stock for boss man
 
 ROOFING CONNECTION:
 - Storm season = business season
@@ -627,7 +730,7 @@ HTML = """
             </div>
         </div>
 
-        <!-- Category Pills -->
+        <!-- Category Pills - Row 1: Sports & Stocks -->
         <div class="category-pills">
             <button class="pill celtics" onclick="sendQuick('How are the Celtics doing? Any latest news?')">
                 <span class="pill-icon">🍀</span>
@@ -637,13 +740,29 @@ HTML = """
                 <span class="pill-icon">🏈</span>
                 Patriots
             </button>
+            <button class="pill stocks" onclick="sendQuick('How are my stocks looking?')">
+                <span class="pill-icon">📈</span>
+                Stocks
+            </button>
             <button class="pill news" onclick="sendQuick('Any big news today?')">
                 <span class="pill-icon">📰</span>
                 News
             </button>
-            <button class="pill stocks" onclick="sendQuick('How are my stocks looking?')">
-                <span class="pill-icon">📈</span>
-                Stocks
+        </div>
+
+        <!-- VIP Pills - Row 2: Personalities -->
+        <div class="category-pills" style="padding-top: 10px;">
+            <button class="pill" style="background: linear-gradient(135deg, #002244 0%, #001a33 100%); border-color: #0044aa; color: white;" onclick="sendQuick('What\\'s the latest on Tom Brady?')">
+                <span class="pill-icon">🐐</span>
+                Brady
+            </button>
+            <button class="pill" style="background: linear-gradient(135deg, #000000 0%, #1a1a1a 100%); border-color: #333333; color: white;" onclick="sendQuick('What\\'s Elon up to? How\\'s TSLA?')">
+                <span class="pill-icon">🚀</span>
+                Elon
+            </button>
+            <button class="pill" style="background: linear-gradient(135deg, #c41e3a 0%, #8b1528 100%); border-color: #ff0000; color: white;" onclick="sendQuick('Any Trump news? How\\'s DJT stock?')">
+                <span class="pill-icon">🇺🇸</span>
+                Trump
             </button>
         </div>
 
@@ -786,6 +905,24 @@ def chat():
                     indicator = "📈" if change > 0 else "📉" if change < 0 else "➡️"
                     stocks_text += f"{symbol}: ${price:.2f} {indicator} {change:+.2f} ({change_pct:+.2f}%)\n"
             response = sully.chat(f"Give me a quick take on these stocks: {stocks_text}", current_data)
+
+        # Handle VIP personality queries (Brady, Elon, Trump)
+        elif any(keyword in user_message.lower() for keyword in ['brady', 'tb12', 'elon', 'musk', 'tesla', 'trump', 'djt']):
+            vip_context = ""
+
+            # Tom Brady
+            if any(keyword in user_message.lower() for keyword in ['brady', 'tb12']):
+                vip_context = aggregator.search_vip_news('tom_brady')
+
+            # Elon Musk / Tesla
+            elif any(keyword in user_message.lower() for keyword in ['elon', 'musk', 'tesla']):
+                vip_context = aggregator.search_vip_news('elon_musk')
+
+            # Trump
+            elif any(keyword in user_message.lower() for keyword in ['trump', 'djt']):
+                vip_context = aggregator.search_vip_news('trump')
+
+            response = sully.chat(f"{user_message}\n\n{vip_context}", current_data)
 
         # Handle news queries for Patriots, Celtics, or general searches
         elif any(keyword in user_message.lower() for keyword in ['patriots', 'pats', 'celtics', 'news', 'latest']):
