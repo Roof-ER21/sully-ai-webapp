@@ -4,7 +4,7 @@ Sully AI - Production Web App
 Zero setup for Boss Man - just send him the URL!
 """
 
-from flask import Flask, render_template_string, request, jsonify
+from flask import Flask, render_template_string, request, jsonify, Response, stream_with_context
 import requests
 from datetime import datetime
 import json
@@ -20,6 +20,9 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY", "")  # Optional: for live news search
 STOCK_SYMBOLS = os.getenv("STOCK_SYMBOLS", "TSLA,AAPL,NVDA,MSFT,GOOGL,AMZN,META,DJT").split(',')
 BOSTON_INTENSITY = int(os.getenv("BOSTON_INTENSITY", "7"))
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2")
 
 # VIP Personalities to track
 VIP_TRACKING = {
@@ -863,6 +866,8 @@ HTML = """
         </div>
     </div>
     <script>
+        // Server TTS flag injected by Flask
+        window.SERVER_TTS_ENABLED = {{ 'true' if server_tts else 'false' }};
         // Speech Recognition Setup
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         let recognition = null;
@@ -996,11 +1001,22 @@ HTML = """
             const cleanText = cleanTextForSpeech(text);
             if (!cleanText) return;
 
+            // Prefer server TTS if enabled for natural, non-robotic voice
+            if (window.SERVER_TTS_ENABLED) {
+                try {
+                    const audio = new Audio('/tts?text=' + encodeURIComponent(cleanText));
+                    audio.play().catch(err => console.warn('Audio play blocked:', err));
+                    return;
+                } catch (e) {
+                    console.warn('Server TTS failed, falling back to Web Speech:', e);
+                }
+            }
+
             if ('speechSynthesis' in window) {
                 // Stop any current speech
                 window.speechSynthesis.cancel();
 
-                // Boston vibe
+                // Boston vibe (best-effort in WebSpeech)
                 const bostonText = bostonizePhrase(cleanText);
                 const utterance = new SpeechSynthesisUtterance(bostonText);
 
@@ -1164,7 +1180,8 @@ HTML = """
 
 @app.route('/')
 def index():
-    return render_template_string(HTML)
+    server_tts = bool(ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID)
+    return render_template_string(HTML, server_tts=server_tts)
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -1255,6 +1272,53 @@ def chat():
 
     except Exception as e:
         return jsonify({'response': f"Ah jeez, hit a snag: {str(e)}", 'error': True})
+
+@app.route('/tts')
+def tts():
+    """Server-side neural TTS proxy (ElevenLabs streaming).
+    Requires ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID.
+    """
+    if not ELEVENLABS_API_KEY or not ELEVENLABS_VOICE_ID:
+        return Response("TTS not configured", status=400)
+
+    text = request.args.get('text', '')
+    if not text:
+        return Response("Missing text", status=400)
+
+    # keep payload reasonable
+    text = text.strip()
+    if len(text) > 1200:
+        text = text[:1200]
+
+    def generate():
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream?optimize_streaming_latency=2"
+        headers = {
+            'xi-api-key': ELEVENLABS_API_KEY,
+            'Accept': 'audio/mpeg',
+            'Content-Type': 'application/json'
+        }
+        payload = {
+            'text': text,
+            'model_id': ELEVENLABS_MODEL_ID,
+            'voice_settings': {
+                'stability': 0.2,
+                'similarity_boost': 0.85,
+                'style': 0.2,
+                'use_speaker_boost': True
+            }
+        }
+        try:
+            with requests.post(url, headers=headers, json=payload, stream=True, timeout=60) as r:
+                r.raise_for_status()
+                for chunk in r.iter_content(chunk_size=4096):
+                    if chunk:
+                        yield chunk
+        except Exception as e:
+            # surface error to client; do not crash server
+            err = f"TTS upstream error: {str(e)}"
+            yield b''
+
+    return Response(stream_with_context(generate()), mimetype='audio/mpeg')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
