@@ -892,10 +892,10 @@ HTML = """
         // Clean text for natural speech (remove emojis, symbols, etc.)
         function cleanTextForSpeech(text) {
             return text
-                // Remove emojis and symbols
-                .replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '')
-                // Remove special symbols and arrows
-                .replace(/[➤➡️📈📉📊🏈🏀🍀🐐🚀🇺🇸👤🎩]/g, '')
+                // Remove all emojis and special symbols using comprehensive ranges
+                .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E0}-\u{1F1FF}]/gu, '')
+                // Remove common symbols that are often emojis
+                .replace(/[📈📉📊🏈🏀🍀🐐🚀🇺🇸👤🎩➤➡️]/g, '')
                 // Remove bullet points and list markers
                 .replace(/^[•\-\*]\s*/gm, '')
                 // Remove extra whitespace
@@ -903,7 +903,7 @@ HTML = """
                 // Remove standalone numbers at start of lines (list numbers)
                 .replace(/^\d+\.\s+/gm, '')
                 // Remove markdown symbols
-                .replace(/[\*\_\~\`]/g, '')
+                .replace(/[*_~`]/g, '')
                 // Remove extra punctuation
                 .replace(/\.{2,}/g, '.')
                 // Clean up spacing around punctuation
