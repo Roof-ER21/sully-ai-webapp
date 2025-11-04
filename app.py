@@ -17,6 +17,7 @@ app = Flask(__name__)
 
 # Configuration from environment (will be set in Railway)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+NEWS_API_KEY = os.getenv("NEWS_API_KEY", "")  # Optional: for live news search
 STOCK_SYMBOLS = os.getenv("STOCK_SYMBOLS", "TSLA,AAPL,NVDA,MSFT,GOOGL,AMZN,META").split(',')
 BOSTON_INTENSITY = int(os.getenv("BOSTON_INTENSITY", "7"))
 
@@ -68,6 +69,57 @@ class NewsAggregator:
             'timestamp': datetime.now().isoformat()
         }
 
+    def search_live_news(self, query: str) -> str:
+        """Search for real-time news using News API or web scraping"""
+        if NEWS_API_KEY:
+            try:
+                url = "https://newsapi.org/v2/everything"
+                params = {
+                    'q': query,
+                    'apiKey': NEWS_API_KEY,
+                    'language': 'en',
+                    'sortBy': 'publishedAt',
+                    'pageSize': 5
+                }
+                response = self.session.get(url, params=params, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    articles = data.get('articles', [])
+                    if articles:
+                        news_summary = f"\n📰 LATEST NEWS FOR '{query.upper()}':\n\n"
+                        for i, article in enumerate(articles[:5], 1):
+                            title = article.get('title', 'N/A')
+                            source = article.get('source', {}).get('name', 'Unknown')
+                            published = article.get('publishedAt', '')
+                            news_summary += f"{i}. {title} - {source}\n"
+                        return news_summary
+            except Exception as e:
+                pass
+
+        # Fallback: ESPN/sports scraping for Patriots/Celtics (free, no API needed)
+        try:
+            if 'patriots' in query.lower() or 'pats' in query.lower():
+                url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/ne"
+                response = self.session.get(url, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    team = data.get('team', {})
+                    record = team.get('record', {}).get('items', [{}])[0].get('summary', 'N/A')
+                    return f"\n🏈 NEW ENGLAND PATRIOTS\nRecord: {record}\nNote: For today's latest news, check patriots.com/news"
+
+            elif 'celtics' in query.lower():
+                url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/bos"
+                response = self.session.get(url, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    team = data.get('team', {})
+                    record = team.get('record', {}).get('items', [{}])[0].get('summary', 'N/A')
+                    return f"\n🏀 BOSTON CELTICS\nRecord: {record}\nNote: For today's latest news, check celtics.com"
+        except Exception:
+            pass
+
+        return f"\n📰 For the latest on {query}, check ESPN.com or team websites!"
+
 # ===== SULLY AI =====
 class SullyAI:
     def __init__(self, api_key: str, boston_intensity: int = 7):
@@ -78,19 +130,50 @@ class SullyAI:
 
     def _build_system_prompt(self) -> str:
         return f"""You are Sully, a wicked smaht AI assistant from Boston. You work for Roof ER (The Roof Docs),
-the best damn storm restoration roofing company from Virginia to Pennsylvania. You're helping the boss man
-stay on top of his stocks, the Patriots, the Celtics, and fantasy football.
+the best damn storm restoration roofing company from Virginia to Pennsylvania (DMV area represent!). You're helping
+the boss man stay on top of his stocks, the Patriots, the Celtics, and fantasy football.
 
 PERSONALITY TRAITS:
-- Boston accent level: {self.boston_intensity}/10 - Use it naturally, not forced. Drop R's sometimes (cah for car,
-  heah for here), use "wicked" as an intensifier, throw in "kid" or "guy"
+- Boston accent level: {self.boston_intensity}/10 - Use it naturally, not forced. Drop R's (cah, heah, pahk),
+  use "wicked" as intensifier, throw in "kid", "guy", "boss"
 - You're smart about markets and sports, not just accent jokes
-- You LOVE New England sports - Patriots and Celtics are your life
-- You're proud to work for Roof ER and sometimes connect business insights to roofing/weather
+- You LOVE New England sports - Patriots and Celtics are your LIFE. When they win, you're hyped!
+- You're proud to work for Roof ER and bridge Boston attitude with DMV territory (VA/MD/PA)
 - You're funny but respectful - boss man is the boss
-- When stocks go up, you're hyped. When they tank, you're realistic but optimistic
 
-Keep it natural - you're from Boston, not performing in a sketch. Be genuinely helpful with market analysis and sports insights."""
+BOSTON HUMOR & SAYINGS (use naturally):
+- "That's wicked good/bad" - Intensifier for everything
+- "Pahk the cah" - Classic Boston, but don't overdo it
+- "Down the cah-pah" - Something's broken/wrong
+- "Masshole" pride - Own it with a wink
+- "The T" - Boston transit (always late jokes)
+- "Lost your khakis? Lost your car keys!" - Boston wordplay
+- "Southie chair" - Saving parking spots (local humor)
+- Patriots/Tom Brady references - You miss him but Drake Maye is the future
+- Celtics dynasty talk - Banner 18 baby!
+- Dunkin' Donuts > Starbucks (always)
+
+DMV AREA AWARENESS (you work here now):
+- You respect the DMV (DC/Maryland/Virginia) - it's good roofing territory
+- "Washing-TON of opportunities" - Weight pun for DMV
+- Traffic jokes - "495 at rush hour? Wicked nightmare, kid"
+- You bridge Boston sports passion with DMV business savvy
+- Maryland crab cakes are "not bad for non-New England seafood"
+
+ROOFING CONNECTION:
+- Storm season = business season
+- "If it's rainin', we're gainin'" - roofing motto
+- Connect weather to stocks ("Stormy markets need solid foundations")
+- Roof ER handles hail, wind, storm damage across VA/MD/PA
+
+SPORTS & STOCKS:
+- When stocks moon: "We're goin' to the moon, kid! Time to buy that boat!"
+- When stocks tank: "Ah, markets are cyclical like New England weather - we'll bounce back"
+- Patriots talk: Get hyped about Drake Maye, but realistic about rebuild
+- Celtics: Brown/Tatum two-way dominance, Banner 18 energy
+- Fantasy: "Start your studs" mentality
+
+Keep it natural - you're a Boston guy in DMV territory, helping boss man crush it. Be genuinely helpful with sharp wit."""
 
     def chat(self, user_message: str, current_data: Dict[str, Any] = None) -> str:
         messages = [{"role": "system", "content": self.system_prompt}]
@@ -235,8 +318,8 @@ HTML = """
         <div class="chat-container">
             <div class="quick-actions">
                 <button class="quick-btn" onclick="sendQuick('How are my stocks looking?')">📊 Stocks</button>
-                <button class="quick-btn" onclick="sendQuick('What about the Patriots?')">🏈 Patriots</button>
-                <button class="quick-btn" onclick="sendQuick('How are the Celtics doing?')">🏀 Celtics</button>
+                <button class="quick-btn" onclick="sendQuick('What's the latest Patriots news today?')">🏈 Patriots News</button>
+                <button class="quick-btn" onclick="sendQuick('How are the Celtics doing? Any latest news?')">🏀 Celtics News</button>
                 <button class="quick-btn" onclick="sendQuick('Any fantasy football tips?')">🏈 Fantasy</button>
             </div>
             <div class="messages" id="messages">
@@ -350,6 +433,21 @@ def chat():
                     indicator = "📈" if change > 0 else "📉" if change < 0 else "➡️"
                     stocks_text += f"{symbol}: ${price:.2f} {indicator} {change:+.2f} ({change_pct:+.2f}%)\n"
             response = sully.chat(f"Give me a quick take on these stocks: {stocks_text}", current_data)
+
+        # Handle news queries for Patriots, Celtics, or general searches
+        elif any(keyword in user_message.lower() for keyword in ['patriots', 'pats', 'celtics', 'news', 'latest']):
+            # Determine search query
+            if 'patriots' in user_message.lower() or 'pats' in user_message.lower():
+                search_query = 'New England Patriots'
+            elif 'celtics' in user_message.lower():
+                search_query = 'Boston Celtics'
+            else:
+                search_query = user_message  # Use user's full query
+
+            # Fetch live news
+            news_context = aggregator.search_live_news(search_query)
+            response = sully.chat(f"{user_message}\n\n{news_context}", current_data)
+
         else:
             response = sully.chat(user_message, current_data)
 
