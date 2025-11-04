@@ -949,7 +949,49 @@ HTML = """
         // Speech Synthesis with Custom Boston Voice
         let currentAudio = null;
 
-        function speak(text) {
+        // Ensure Web Speech voices are loaded (Safari/Chrome lazy-load)
+        async function ensureVoices(timeoutMs = 1500) {
+            if (!('speechSynthesis' in window)) return [];
+            const synth = window.speechSynthesis;
+            let voices = synth.getVoices();
+            if (voices && voices.length) return voices;
+            voices = await new Promise((resolve) => {
+                const t = setTimeout(() => resolve(synth.getVoices()), timeoutMs);
+                const handler = () => { clearTimeout(t); synth.removeEventListener('voiceschanged', handler); resolve(synth.getVoices()); };
+                synth.addEventListener('voiceschanged', handler);
+            });
+            return voices;
+        }
+
+        // Boston accent transformation (heuristic non‑rhotic)
+        function bostonizeText(input) {
+            return input.split(/(\s+)/).map(t => /[A-Za-z]/.test(t) ? bostonizeWord(t) : t).join('');
+        }
+        function bostonizeWord(w) {
+            const caps = /^[A-Z]/.test(w);
+            let s = w.toLowerCase();
+            // Notable terms
+            s = s.replace(/\bharvard\b/g, 'hahvahd');
+            s = s.replace(/\byard\b/g, 'yahd');
+            s = s.replace(/\bboston\b/g, 'bahstin');
+            s = s.replace(/\bparty\b/g, 'pahty');
+            // 'ar' -> 'ah' before consonant or end
+            s = s.replace(/ar(?![aeiou])/g, 'ah');
+            // final 'er' -> 'ah'
+            s = s.replace(/er\b/g, 'ah');
+            // vowel+r+consonant -> drop r
+            s = s.replace(/([aeiou])r([bcdfghjklmnpqrstvwxyz])/g, '$1$2');
+            // "ing" -> "in'" sometimes
+            s = s.replace(/ing\b/g, "in'");
+            if (caps) s = s.charAt(0).toUpperCase() + s.slice(1);
+            return s;
+        }
+        function bostonizePhrase(input) {
+            const base = bostonizeText(input);
+            return base.replace(/\b([A-Za-z]+a)\b(\s+)([aeiouAEIOU])/g, (_m, w1, gap, v) => w1 + 'r' + gap + v);
+        }
+
+        async function speak(text) {
             // Clean text for natural speech
             const cleanText = cleanTextForSpeech(text);
             if (!cleanText) return;
@@ -958,31 +1000,33 @@ HTML = """
                 // Stop any current speech
                 window.speechSynthesis.cancel();
 
-                const utterance = new SpeechSynthesisUtterance(cleanText);
+                // Boston vibe
+                const bostonText = bostonizePhrase(cleanText);
+                const utterance = new SpeechSynthesisUtterance(bostonText);
 
                 // Natural male voice settings
                 utterance.rate = 1.0;      // Normal speed
                 utterance.pitch = 0.85;    // Slightly lower for masculine sound
                 utterance.volume = 1.0;
+                utterance.lang = 'en-US';
 
-                // Get all available voices
-                const voices = window.speechSynthesis.getVoices();
+                // Get all available voices (ensure loaded)
+                const voices = await ensureVoices();
 
                 // Priority list for best male US voices
                 const voicePriority = [
-                    // Best US male voices
-                    'Alex',                    // macOS - Best male voice
-                    'Fred',                    // macOS - Alternative male
-                    'Microsoft David',         // Windows - Good male
-                    'Microsoft Mark',          // Windows - Alternative male
-                    'Google US English Male',  // Chrome - Google male
-                    'en-US-Standard-D',        // Google Cloud male
-                    'en-US-Standard-B',        // Google Cloud male alternative
+                    'Alex',                     // macOS - Best male voice
+                    'Fred',                     // macOS - Alternative male
+                    'Microsoft Mark',           // Windows
+                    'Microsoft David',          // Windows
+                    'Google US English',        // Chrome generic label
+                    'Google US English Male',   // Some Chrome variants
+                    'en-US-Standard-D',         // Google Cloud male
+                    'en-US-Standard-B',         // Google Cloud male alt
                 ];
 
                 // Find the best available voice
                 let selectedVoice = null;
-
                 // Try exact name matches first
                 for (const voiceName of voicePriority) {
                     selectedVoice = voices.find(v => v.name === voiceName);
@@ -991,23 +1035,17 @@ HTML = """
                         break;
                     }
                 }
-
                 // If no exact match, try partial matches for male US voices
                 if (!selectedVoice) {
                     selectedVoice = voices.find(v =>
-                        v.lang.startsWith('en-US') &&
-                        (v.name.toLowerCase().includes('male') ||
-                         v.name.toLowerCase().includes('david') ||
-                         v.name.toLowerCase().includes('mark') ||
-                         v.name.toLowerCase().includes('alex'))
+                        (v.lang || '').toLowerCase().startsWith('en-us') &&
+                        /(male|alex|fred|mark|david|guy|mike|john)/i.test(v.name)
                     );
                 }
-
                 // Final fallback: any US English voice
                 if (!selectedVoice) {
-                    selectedVoice = voices.find(v => v.lang === 'en-US');
+                    selectedVoice = voices.find(v => (v.lang || '').toLowerCase().startsWith('en-us'));
                 }
-
                 if (selectedVoice) {
                     utterance.voice = selectedVoice;
                     console.log('Selected voice:', selectedVoice.name, selectedVoice.lang);
