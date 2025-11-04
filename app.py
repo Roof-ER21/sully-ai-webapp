@@ -642,6 +642,40 @@ HTML = """
             color: #6b7280;
         }
 
+        .mic-button {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(22, 163, 74, 0.3);
+        }
+
+        .mic-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(22, 163, 74, 0.5);
+        }
+
+        .mic-button:active {
+            transform: scale(0.95);
+        }
+
+        .mic-button.listening {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+
         .send-button {
             width: 50px;
             height: 50px;
@@ -669,6 +703,31 @@ HTML = """
         .send-button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+        }
+
+        .voice-status {
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: #16a34a;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            display: none;
+            z-index: 100;
+        }
+
+        .voice-status.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+            to { opacity: 1; transform: translateX(-50%) translateY(0); }
         }
 
         /* Scrollbar */
@@ -780,15 +839,101 @@ HTML = """
         <!-- Loading Indicator -->
         <div class="loading" id="loading">🎩 Sully's thinkin'...</div>
 
+        <!-- Voice Status Indicator -->
+        <div class="voice-status" id="voice-status">🎤 Listening...</div>
+
         <!-- Input Section -->
         <div class="input-section">
+            <button class="mic-button" id="mic-btn" onclick="toggleVoice()" title="Click to talk">🎤</button>
             <div class="input-wrapper">
-                <input type="text" id="user-input" class="input-field" placeholder="Ask Sully anything about Boston sports..." onkeypress="handleKeyPress(event)" autocomplete="off">
+                <input type="text" id="user-input" class="input-field" placeholder="Ask Sully anything or click 🎤 to talk..." onkeypress="handleKeyPress(event)" autocomplete="off">
             </div>
             <button class="send-button" id="send-btn" onclick="sendMessage()">➤</button>
         </div>
     </div>
     <script>
+        // Speech Recognition Setup
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
+        let isListening = false;
+
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = function() {
+                isListening = true;
+                document.getElementById('mic-btn').classList.add('listening');
+                document.getElementById('voice-status').classList.add('active');
+            };
+
+            recognition.onend = function() {
+                isListening = false;
+                document.getElementById('mic-btn').classList.remove('listening');
+                document.getElementById('voice-status').classList.remove('active');
+            };
+
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                document.getElementById('user-input').value = transcript;
+                sendMessage();
+            };
+
+            recognition.onerror = function(event) {
+                console.error('Speech recognition error:', event.error);
+                isListening = false;
+                document.getElementById('mic-btn').classList.remove('listening');
+                document.getElementById('voice-status').classList.remove('active');
+            };
+        }
+
+        // Speech Synthesis Setup
+        function speak(text) {
+            if ('speechSynthesis' in window) {
+                // Cancel any ongoing speech
+                window.speechSynthesis.cancel();
+
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = 1.0;
+                utterance.pitch = 1.0;
+                utterance.volume = 1.0;
+
+                // Try to find a male US English voice
+                const voices = window.speechSynthesis.getVoices();
+                const preferredVoice = voices.find(voice =>
+                    voice.lang.includes('en-US') && voice.name.includes('Male')
+                ) || voices.find(voice => voice.lang.includes('en-US'));
+
+                if (preferredVoice) {
+                    utterance.voice = preferredVoice;
+                }
+
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        // Load voices (needed for some browsers)
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.onvoiceschanged = function() {
+                window.speechSynthesis.getVoices();
+            };
+        }
+
+        function toggleVoice() {
+            if (!recognition) {
+                alert('Voice recognition not supported in this browser. Try Chrome or Edge!');
+                return;
+            }
+
+            if (isListening) {
+                recognition.stop();
+            } else {
+                recognition.start();
+            }
+        }
+
         function addMessage(text, sender) {
             const messagesDiv = document.getElementById('messages');
             const messageDiv = document.createElement('div');
@@ -820,6 +965,7 @@ HTML = """
             document.getElementById('loading').className = active ? 'loading active' : 'loading';
             document.getElementById('send-btn').disabled = active;
             document.getElementById('user-input').disabled = active;
+            document.getElementById('mic-btn').disabled = active;
         }
 
         async function sendMessage() {
@@ -842,12 +988,18 @@ HTML = """
 
                 if (data.response) {
                     addMessage(data.response, 'sully');
+                    // Speak Sully's response
+                    speak(data.response);
                 } else {
-                    addMessage('Ah jeez, hit a snag there. Try again, kid.', 'sully');
+                    const errorMsg = 'Ah jeez, hit a snag there. Try again, kid.';
+                    addMessage(errorMsg, 'sully');
+                    speak(errorMsg);
                 }
             } catch (error) {
                 setLoading(false);
-                addMessage('Down the cah-pah with the connection. Try again, boss.', 'sully');
+                const errorMsg = 'Down the cah-pah with the connection. Try again, boss.';
+                addMessage(errorMsg, 'sully');
+                speak(errorMsg);
             }
         }
 
