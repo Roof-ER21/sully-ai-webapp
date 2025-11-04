@@ -960,8 +960,9 @@ HTML = """
                 const utterance = new SpeechSynthesisUtterance(cleanText);
 
                 // Voice settings for a deeper, more masculine Boston-style voice
-                utterance.rate = 0.9;   // Slower for more natural Boston feel
-                utterance.pitch = 0.8;  // Lower pitch for deeper masculine voice
+                // Trying to match Southie Boston accent characteristics
+                utterance.rate = 0.85;  // Slower, more deliberate (Boston pace)
+                utterance.pitch = 0.75; // Lower pitch for gruff Boston voice
                 utterance.volume = 1.0;
 
                 // Try to find the best male US voice
