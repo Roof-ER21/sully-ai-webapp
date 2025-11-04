@@ -1001,7 +1001,7 @@ HTML = """
             const cleanText = cleanTextForSpeech(text);
             if (!cleanText) return;
 
-            // Prefer server TTS if enabled for natural, non-robotic voice
+            // Prefer server TTS if enabled for natural voice (paid). If not set, use browser voices only.
             if (window.SERVER_TTS_ENABLED) {
                 try {
                     const audio = new Audio('/tts?text=' + encodeURIComponent(cleanText));
@@ -1016,13 +1016,12 @@ HTML = """
                 // Stop any current speech
                 window.speechSynthesis.cancel();
 
-                // Boston vibe (best-effort in WebSpeech)
-                const bostonText = bostonizePhrase(cleanText);
-                const utterance = new SpeechSynthesisUtterance(bostonText);
+                // Regular male US English voice (no accent transform)
+                const utterance = new SpeechSynthesisUtterance(cleanText);
 
                 // Natural male voice settings
                 utterance.rate = 1.0;      // Normal speed
-                utterance.pitch = 0.85;    // Slightly lower for masculine sound
+                utterance.pitch = 1.0;     // Natural pitch for neutral male
                 utterance.volume = 1.0;
                 utterance.lang = 'en-US';
 
