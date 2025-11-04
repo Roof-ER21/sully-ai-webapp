@@ -4,7 +4,7 @@ Sully AI - Production Web App
 Zero setup for Boss Man - just send him the URL!
 """
 
-from flask import Flask, render_template_string, request, jsonify, send_file
+from flask import Flask, render_template_string, request, jsonify
 import requests
 from datetime import datetime
 import json
@@ -12,14 +12,8 @@ from typing import Dict, List, Any
 from groq import Groq
 import pytz
 import os
-import io
-import subprocess
-import hashlib
 
 app = Flask(__name__)
-
-# Path to Boston voice sample (upload this file to server)
-BOSTON_VOICE_SAMPLE = os.getenv("BOSTON_VOICE_PATH", "/app/boston_voice.mp3")
 
 # Configuration from environment (will be set in Railway)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -955,61 +949,69 @@ HTML = """
         // Speech Synthesis with Custom Boston Voice
         let currentAudio = null;
 
-        async function speak(text) {
+        function speak(text) {
             // Clean text for natural speech
             const cleanText = cleanTextForSpeech(text);
             if (!cleanText) return;
 
-            try {
-                // Stop any currently playing audio
-                if (currentAudio) {
-                    currentAudio.pause();
-                    currentAudio = null;
-                }
-
-                // Request custom Boston voice from server
-                const response = await fetch('/speak', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({text: cleanText})
-                });
-
-                if (!response.ok) {
-                    console.error('TTS server error, falling back to browser voice');
-                    speakBrowserVoice(cleanText);
-                    return;
-                }
-
-                // Play the generated audio
-                const audioBlob = await response.blob();
-                const audioUrl = URL.createObjectURL(audioBlob);
-                currentAudio = new Audio(audioUrl);
-                currentAudio.play();
-
-                // Clean up URL when done
-                currentAudio.onended = () => {
-                    URL.revokeObjectURL(audioUrl);
-                };
-
-            } catch (error) {
-                console.error('Custom voice error:', error);
-                // Fallback to browser voice
-                speakBrowserVoice(cleanText);
-            }
-        }
-
-        // Fallback browser voice (if custom TTS fails)
-        function speakBrowserVoice(text) {
             if ('speechSynthesis' in window) {
+                // Stop any current speech
                 window.speechSynthesis.cancel();
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = 0.85;
-                utterance.pitch = 0.75;
+
+                const utterance = new SpeechSynthesisUtterance(cleanText);
+
+                // Natural male voice settings
+                utterance.rate = 1.0;      // Normal speed
+                utterance.pitch = 0.85;    // Slightly lower for masculine sound
                 utterance.volume = 1.0;
 
+                // Get all available voices
                 const voices = window.speechSynthesis.getVoices();
-                const preferredVoice = voices.find(voice => voice.lang === 'en-US');
-                if (preferredVoice) utterance.voice = preferredVoice;
+
+                // Priority list for best male US voices
+                const voicePriority = [
+                    // Best US male voices
+                    'Alex',                    // macOS - Best male voice
+                    'Fred',                    // macOS - Alternative male
+                    'Microsoft David',         // Windows - Good male
+                    'Microsoft Mark',          // Windows - Alternative male
+                    'Google US English Male',  // Chrome - Google male
+                    'en-US-Standard-D',        // Google Cloud male
+                    'en-US-Standard-B',        // Google Cloud male alternative
+                ];
+
+                // Find the best available voice
+                let selectedVoice = null;
+
+                // Try exact name matches first
+                for (const voiceName of voicePriority) {
+                    selectedVoice = voices.find(v => v.name === voiceName);
+                    if (selectedVoice) {
+                        console.log('Using voice:', selectedVoice.name);
+                        break;
+                    }
+                }
+
+                // If no exact match, try partial matches for male US voices
+                if (!selectedVoice) {
+                    selectedVoice = voices.find(v =>
+                        v.lang.startsWith('en-US') &&
+                        (v.name.toLowerCase().includes('male') ||
+                         v.name.toLowerCase().includes('david') ||
+                         v.name.toLowerCase().includes('mark') ||
+                         v.name.toLowerCase().includes('alex'))
+                    );
+                }
+
+                // Final fallback: any US English voice
+                if (!selectedVoice) {
+                    selectedVoice = voices.find(v => v.lang === 'en-US');
+                }
+
+                if (selectedVoice) {
+                    utterance.voice = selectedVoice;
+                    console.log('Selected voice:', selectedVoice.name, selectedVoice.lang);
+                }
 
                 window.speechSynthesis.speak(utterance);
             }
@@ -1125,50 +1127,6 @@ HTML = """
 @app.route('/')
 def index():
     return render_template_string(HTML)
-
-@app.route('/speak', methods=['POST'])
-def generate_speech():
-    """Generate speech using Coqui TTS with Boston voice cloning"""
-    try:
-        data = request.get_json()
-        text = data.get('text', '')
-
-        if not text:
-            return jsonify({'error': 'No text provided'}), 400
-
-        # Create hash of text for caching
-        text_hash = hashlib.md5(text.encode()).hexdigest()
-        cache_path = f"/tmp/sully_audio_{text_hash}.wav"
-
-        # Check if already generated
-        if os.path.exists(cache_path):
-            return send_file(cache_path, mimetype='audio/wav')
-
-        # Generate audio using Coqui TTS with voice cloning
-        cmd = [
-            'tts',
-            '--text', text,
-            '--model_name', 'tts_models/multilingual/multi-dataset/xtts_v2',
-            '--speaker_wav', BOSTON_VOICE_SAMPLE,
-            '--language_idx', 'en',
-            '--out_path', cache_path
-        ]
-
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-
-        if result.returncode != 0:
-            print(f"TTS Error: {result.stderr}")
-            return jsonify({'error': 'TTS generation failed', 'details': result.stderr}), 500
-
-        if os.path.exists(cache_path):
-            return send_file(cache_path, mimetype='audio/wav')
-        else:
-            return jsonify({'error': 'Audio file not generated'}), 500
-
-    except subprocess.TimeoutExpired:
-        return jsonify({'error': 'TTS generation timeout'}), 500
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 @app.route('/chat', methods=['POST'])
 def chat():
