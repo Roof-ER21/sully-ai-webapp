@@ -279,23 +279,34 @@ SPORTS & STOCKS:
 RESPONSE FORMATTING (CRITICAL):
 - Break up responses into SHORT paragraphs (2-3 sentences max)
 - Use line breaks between thoughts
-- Add bullet points for lists
-- Use emojis as visual breaks
+- NO emojis in stock/financial data (voice reads them)
+- Use simple text symbols: UP/DOWN/FLAT instead of emojis
 - NO long run-on sentences
 - Make it scannable and easy to read on mobile
 
+STOCK DATA FORMATTING:
+When discussing stocks, format like this:
+"TSLA
+Price: $245.50
+Change: UP $12.30 (+5.2%)
+
+That's wicked good news, boss!"
+
+NOT like this:
+"📊 TSLA: $245.50 📈 +$12.30 (+5.2%) 🚀"
+
 Example Good Format:
-"Hey boss! TSLA is up 5% today. That's wicked good news!
+"Hey boss! TSLA is up big today.
 
-📈 Quick take:
-- Price: $245.50 (+$12.30)
-- Volume looking solid
-- Momentum is strong
+TSLA
+Price: $245.50
+Change: UP $12.30 (+5.2%)
+Status: Strong momentum
 
-The market's treatin' ya right today, kid. Keep an eye on it though - earnings comin' up next week."
+The market's treatin' ya right. Keep an eye on earnings next week though."
 
 Example Bad Format (DON'T DO THIS):
-"Hey boss TSLA is up 5% today at $245.50 which is up $12.30 and the volume is looking solid and the momentum is strong so the market is treating you right today kid but keep an eye on it because earnings are coming up next week."
+"Hey boss 📈 TSLA is up 5% today at $245.50 which is up $12.30 🚀 and the volume is looking solid 📊 and the momentum is strong so the market is treating you right today kid 💰"
 
 Keep it natural - you're a Boston guy in DMV territory, helping boss man crush it. Be genuinely helpful with sharp wit AND easy-to-read formatting."""
 
@@ -1114,15 +1125,32 @@ def chat():
 
         # Handle special commands
         if 'stock' in user_message.lower():
-            stocks_text = "📊 HERE'S YOUR PORTFOLIO, BOSS:\n\n"
+            # Format stock data in a clean, readable way
+            stocks_text = "\n=== PORTFOLIO UPDATE ===\n\n"
             for symbol, stock_data in current_data['stocks'].items():
                 if 'error' not in stock_data:
                     price = stock_data['price']
                     change = stock_data['change']
                     change_pct = stock_data['change_percent']
-                    indicator = "📈" if change > 0 else "📉" if change < 0 else "➡️"
-                    stocks_text += f"{symbol}: ${price:.2f} {indicator} {change:+.2f} ({change_pct:+.2f}%)\n"
-            response = sully.chat(f"Give me a quick take on these stocks: {stocks_text}", current_data)
+
+                    # Determine trend
+                    if change > 0:
+                        trend = "UP"
+                        arrow = "↑"
+                    elif change < 0:
+                        trend = "DOWN"
+                        arrow = "↓"
+                    else:
+                        trend = "FLAT"
+                        arrow = "→"
+
+                    stocks_text += f"{symbol}\n"
+                    stocks_text += f"  Price: ${price:.2f}\n"
+                    stocks_text += f"  Change: {arrow} ${abs(change):.2f} ({change_pct:+.2f}%)\n"
+                    stocks_text += f"  Status: {trend}\n\n"
+
+            stocks_text += "======================\n"
+            response = sully.chat(f"Give me your Boston take on these stocks:\n{stocks_text}", current_data)
 
         # Handle VIP personality queries (Brady, Elon, Trump)
         elif any(keyword in user_message.lower() for keyword in ['brady', 'tb12', 'elon', 'musk', 'tesla', 'trump', 'djt']):
