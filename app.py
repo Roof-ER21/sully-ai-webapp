@@ -889,25 +889,64 @@ HTML = """
             };
         }
 
+        // Clean text for natural speech (remove emojis, symbols, etc.)
+        function cleanTextForSpeech(text) {
+            return text
+                // Remove emojis and symbols
+                .replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '')
+                // Remove special symbols and arrows
+                .replace(/[➤➡️📈📉📊🏈🏀🍀🐐🚀🇺🇸👤🎩]/g, '')
+                // Remove bullet points and list markers
+                .replace(/^[•\-\*]\s*/gm, '')
+                // Remove extra whitespace
+                .replace(/\s+/g, ' ')
+                // Remove standalone numbers at start of lines (list numbers)
+                .replace(/^\d+\.\s+/gm, '')
+                // Remove markdown symbols
+                .replace(/[\*\_\~\`]/g, '')
+                // Remove extra punctuation
+                .replace(/\.{2,}/g, '.')
+                // Clean up spacing around punctuation
+                .replace(/\s+([,.!?])/g, '$1')
+                .trim();
+        }
+
         // Speech Synthesis Setup
         function speak(text) {
             if ('speechSynthesis' in window) {
                 // Cancel any ongoing speech
                 window.speechSynthesis.cancel();
 
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = 1.0;
-                utterance.pitch = 1.0;
+                // Clean text for natural speech
+                const cleanText = cleanTextForSpeech(text);
+
+                if (!cleanText) return; // Don't speak if nothing left after cleaning
+
+                const utterance = new SpeechSynthesisUtterance(cleanText);
+
+                // Voice settings for a deeper, more masculine Boston-style voice
+                utterance.rate = 0.95;  // Slightly slower for Boston accent feel
+                utterance.pitch = 0.85; // Lower pitch for masculine voice
                 utterance.volume = 1.0;
 
-                // Try to find a male US English voice
+                // Try to find the best male voice
                 const voices = window.speechSynthesis.getVoices();
-                const preferredVoice = voices.find(voice =>
-                    voice.lang.includes('en-US') && voice.name.includes('Male')
-                ) || voices.find(voice => voice.lang.includes('en-US'));
+
+                // Priority order for voice selection:
+                // 1. Try to find Aaron (male US voice on many systems)
+                // 2. Any US male voice
+                // 3. Any male voice
+                // 4. Any US voice
+                const preferredVoice =
+                    voices.find(voice => voice.name.includes('Aaron')) ||
+                    voices.find(voice => voice.lang.includes('en-US') && (voice.name.includes('Male') || voice.name.includes('Man'))) ||
+                    voices.find(voice => voice.name.includes('Male') || voice.name.includes('Man')) ||
+                    voices.find(voice => voice.lang.includes('en-US') && voice.name.includes('David')) ||
+                    voices.find(voice => voice.lang.includes('en-US'));
 
                 if (preferredVoice) {
                     utterance.voice = preferredVoice;
+                    console.log('Using voice:', preferredVoice.name);
                 }
 
                 window.speechSynthesis.speak(utterance);
