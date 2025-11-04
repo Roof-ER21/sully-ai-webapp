@@ -207,132 +207,445 @@ HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🏗️ Sully AI - Boston-Born Assistant</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏗️</text></svg>">
+    <title>Sully AI - Boston Sports Assistant | Roof ER</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎩</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #1a5490 0%, #0d3a66 100%);
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+            color: #ffffff;
             min-height: 100vh;
-            padding: 10px;
-        }
-        .container { max-width: 1000px; margin: 0 auto; }
-        .header {
-            background: rgba(255, 255, 255, 0.98);
-            padding: 20px;
-            border-radius: 15px;
-            text-align: center;
-            margin-bottom: 15px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-        }
-        .header h1 { color: #1a5490; font-size: 2em; margin-bottom: 5px; }
-        .header p { color: #666; font-size: 1em; }
-        .chat-container {
-            background: rgba(255, 255, 255, 0.98);
-            border-radius: 15px;
-            padding: 20px;
-            height: calc(100vh - 200px);
-            min-height: 500px;
             display: flex;
-            flex-direction: column;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
         }
-        .messages {
-            flex: 1;
-            overflow-y: auto;
+
+        .app-container {
+            width: 100%;
+            max-width: 420px;
+            background: #0a0a0a;
+            border-radius: 30px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+            border: 2px solid #1a1a1a;
+        }
+
+        /* Header Section */
+        .header {
+            background: linear-gradient(135deg, #c41e3a 0%, #8b1528 100%);
+            padding: 30px 25px 25px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -20%;
+            width: 300px;
+            height: 300px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 50%;
+        }
+
+        .header::after {
+            content: '';
+            position: absolute;
+            bottom: -30%;
+            left: -15%;
+            width: 250px;
+            height: 250px;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 50%;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
             margin-bottom: 15px;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 10px;
+            position: relative;
+            z-index: 2;
         }
-        .message { margin-bottom: 15px; animation: slideIn 0.3s ease; }
-        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .message.user { text-align: right; }
-        .message-bubble {
-            display: inline-block;
-            padding: 12px 18px;
-            border-radius: 18px;
-            max-width: 80%;
-            word-wrap: break-word;
-            white-space: pre-wrap;
-            font-size: 15px;
-            line-height: 1.5;
+
+        .logo-circle {
+            width: 70px;
+            height: 70px;
+            background: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            border: 3px solid #1a1a1a;
         }
-        .message.user .message-bubble { background: #1a5490; color: white; border-bottom-right-radius: 5px; }
-        .message.sully .message-bubble { background: white; color: #333; border: 2px solid #1a5490; border-bottom-left-radius: 5px; }
-        .message-label { font-size: 0.8em; color: #666; margin-bottom: 5px; font-weight: 600; }
-        .quick-actions { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-        .quick-btn {
-            padding: 8px 16px;
-            background: rgba(26, 84, 144, 0.1);
-            border: 2px solid #1a5490;
-            border-radius: 20px;
-            cursor: pointer;
-            font-size: 13px;
-            color: #1a5490;
+
+        .logo-text {
+            font-size: 24px;
+            font-weight: 900;
+            color: #c41e3a;
+            text-align: center;
+            line-height: 1;
+        }
+
+        .title-section {
+            text-align: center;
+            position: relative;
+            z-index: 2;
+        }
+
+        .main-title {
+            font-size: 32px;
+            font-weight: 900;
+            margin-bottom: 5px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .boston-hat {
+            font-size: 28px;
+        }
+
+        .subtitle {
+            font-size: 14px;
             font-weight: 600;
-            transition: all 0.3s;
+            opacity: 0.95;
+            margin-bottom: 3px;
         }
-        .quick-btn:hover { background: #1a5490; color: white; transform: translateY(-2px); }
-        .input-area { display: flex; gap: 10px; }
-        #user-input {
-            flex: 1;
-            padding: 12px 18px;
-            border: 2px solid #1a5490;
-            border-radius: 25px;
-            font-size: 15px;
-            outline: none;
+
+        .powered-by {
+            font-size: 11px;
+            opacity: 0.8;
+            font-weight: 500;
         }
-        #user-input:focus { border-color: #0d3a66; }
-        .btn-send {
-            padding: 12px 28px;
-            border: none;
+
+        /* Chat Area */
+        .chat-area {
+            background: #0f0f0f;
+            min-height: 400px;
+            max-height: 500px;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        /* Category Pills */
+        .category-pills {
+            display: flex;
+            gap: 10px;
+            padding: 20px;
+            background: #0f0f0f;
+            flex-wrap: wrap;
+            justify-content: center;
+            border-top: 1px solid #1a1a1a;
+        }
+
+        .pill {
+            padding: 10px 18px;
             border-radius: 25px;
-            font-size: 15px;
+            font-size: 13px;
             font-weight: 700;
             cursor: pointer;
-            background: #1a5490;
-            color: white;
-            transition: all 0.3s;
+            transition: all 0.3s ease;
+            border: 2px solid;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
-        .btn-send:hover { background: #0d3a66; transform: translateY(-2px); box-shadow: 0 5px 15px rgba(26, 84, 144, 0.4); }
-        .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
-        .loading { display: none; text-align: center; padding: 15px; color: #1a5490; font-style: italic; font-weight: 600; }
-        .loading.active { display: block; }
-        @media (max-width: 768px) {
-            .header h1 { font-size: 1.5em; }
-            .message-bubble { max-width: 90%; font-size: 14px; }
-            .quick-actions { flex-direction: column; }
-            .quick-btn { width: 100%; }
+
+        .pill.celtics {
+            background: linear-gradient(135deg, #007A33 0%, #005a26 100%);
+            border-color: #00a84f;
+            color: white;
+        }
+
+        .pill.celtics:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 122, 51, 0.4);
+        }
+
+        .pill.patriots {
+            background: linear-gradient(135deg, #002244 0%, #001a33 100%);
+            border-color: #0044aa;
+            color: white;
+        }
+
+        .pill.patriots:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 34, 68, 0.4);
+        }
+
+        .pill.news {
+            background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+            border-color: #9ca3af;
+            color: white;
+        }
+
+        .pill.news:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(107, 114, 128, 0.4);
+        }
+
+        .pill.stocks {
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+            border-color: #22c55e;
+            color: white;
+        }
+
+        .pill.stocks:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(22, 163, 74, 0.4);
+        }
+
+        /* Message Bubble */
+        .message {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            flex-direction: row-reverse;
+        }
+
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #c41e3a, #8b1528);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            flex-shrink: 0;
+            border: 2px solid #1a1a1a;
+        }
+
+        .message.user .avatar {
+            background: linear-gradient(135deg, #6b7280, #4b5563);
+        }
+
+        .message-content {
+            flex: 1;
+        }
+
+        .message-name {
+            font-size: 12px;
+            font-weight: 700;
+            color: #c41e3a;
+            margin-bottom: 5px;
+        }
+
+        .message.user .message-name {
+            color: #9ca3af;
+            text-align: right;
+        }
+
+        .message-bubble {
+            background: linear-gradient(135deg, #1a1a1a 0%, #262626 100%);
+            padding: 15px 18px;
+            border-radius: 18px;
+            border: 1px solid #2a2a2a;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #e4e4e7;
+        }
+
+        .message.user .message-bubble {
+            background: linear-gradient(135deg, #c41e3a, #8b1528);
+            color: white;
+            border-color: #c41e3a;
+        }
+
+        /* Input Section */
+        .input-section {
+            padding: 20px;
+            background: #0a0a0a;
+            border-top: 2px solid #1a1a1a;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .input-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        .input-field {
+            width: 100%;
+            padding: 14px 20px;
+            background: #1a1a1a;
+            border: 2px solid #2a2a2a;
+            border-radius: 25px;
+            color: #ffffff;
+            font-size: 14px;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.3s ease;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: #c41e3a;
+            background: #262626;
+        }
+
+        .input-field::placeholder {
+            color: #6b7280;
+        }
+
+        .send-button {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #c41e3a 0%, #8b1528 100%);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(196, 30, 58, 0.3);
+        }
+
+        .send-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(196, 30, 58, 0.5);
+        }
+
+        .send-button:active {
+            transform: scale(0.95);
+        }
+
+        .send-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Scrollbar */
+        .chat-area::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .chat-area::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .chat-area::-webkit-scrollbar-thumb {
+            background: #2a2a2a;
+            border-radius: 3px;
+        }
+
+        .chat-area::-webkit-scrollbar-thumb:hover {
+            background: #3a3a3a;
+        }
+
+        .pill-icon {
+            font-size: 16px;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 15px;
+            color: #c41e3a;
+            font-style: italic;
+            font-weight: 600;
+        }
+
+        .loading.active {
+            display: block;
         }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="app-container">
+        <!-- Header -->
         <div class="header">
-            <h1>🏗️ Sully AI 🏗️</h1>
-            <p><strong>Boston-Born AI Assistant for Boss Man</strong></p>
-            <p style="font-size: 0.85em; margin-top: 8px; color: #999;">Built for Roof ER - The Roof Docs</p>
-        </div>
-        <div class="chat-container">
-            <div class="quick-actions">
-                <button class="quick-btn" onclick="sendQuick('How are my stocks looking?')">📊 Stocks</button>
-                <button class="quick-btn" onclick="sendQuick('What's the latest Patriots news today?')">🏈 Patriots News</button>
-                <button class="quick-btn" onclick="sendQuick('How are the Celtics doing? Any latest news?')">🏀 Celtics News</button>
-                <button class="quick-btn" onclick="sendQuick('Any fantasy football tips?')">🏈 Fantasy</button>
-            </div>
-            <div class="messages" id="messages">
-                <div class="message sully">
-                    <div class="message-label">🤖 Sully</div>
-                    <div class="message-bubble">Hey boss! Sully heah, ready to help ya out. Ask me about your stocks, the Pats, the Celtics, or anything else. I'm wicked smaht and here for ya!</div>
+            <div class="logo-section">
+                <div class="logo-circle">
+                    <div style="text-align: center;">
+                        <div class="logo-text">ROOF</div>
+                        <div class="logo-text">ER</div>
+                    </div>
                 </div>
             </div>
-            <div class="loading" id="loading">🤖 Sully's thinkin'...</div>
-            <div class="input-area">
-                <input type="text" id="user-input" placeholder="Ask Sully anything..." onkeypress="handleKeyPress(event)" autocomplete="off">
-                <button class="btn-send" id="send-btn" onclick="sendMessage()">Send</button>
+            <div class="title-section">
+                <div class="main-title">
+                    <span class="boston-hat">🎩</span>
+                    Sully AI
+                    <span class="boston-hat">🏀</span>
+                </div>
+                <div class="subtitle">Your Wicked Smaht Boston Assistant</div>
+                <div class="powered-by">Powered by Roof ER - The Roof Docs</div>
             </div>
+        </div>
+
+        <!-- Category Pills -->
+        <div class="category-pills">
+            <button class="pill celtics" onclick="sendQuick('How are the Celtics doing? Any latest news?')">
+                <span class="pill-icon">🍀</span>
+                Celtics
+            </button>
+            <button class="pill patriots" onclick="sendQuick('What\\'s the latest Patriots news today?')">
+                <span class="pill-icon">🏈</span>
+                Patriots
+            </button>
+            <button class="pill news" onclick="sendQuick('Any big news today?')">
+                <span class="pill-icon">📰</span>
+                News
+            </button>
+            <button class="pill stocks" onclick="sendQuick('How are my stocks looking?')">
+                <span class="pill-icon">📈</span>
+                Stocks
+            </button>
+        </div>
+
+        <!-- Chat Area -->
+        <div class="chat-area" id="messages">
+            <div class="message">
+                <div class="avatar">🎩</div>
+                <div class="message-content">
+                    <div class="message-name">Sully</div>
+                    <div class="message-bubble">Hey there, boss! Sully heah, straight outta Southie! 🍀 Ready to talk Celtics, Pats, or check those stocks? I'm wicked smaht and here to help ya out. What's on your mind today?</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div class="loading" id="loading">🎩 Sully's thinkin'...</div>
+
+        <!-- Input Section -->
+        <div class="input-section">
+            <div class="input-wrapper">
+                <input type="text" id="user-input" class="input-field" placeholder="Ask Sully anything about Boston sports..." onkeypress="handleKeyPress(event)" autocomplete="off">
+            </div>
+            <button class="send-button" id="send-btn" onclick="sendMessage()">➤</button>
         </div>
     </div>
     <script>
@@ -340,29 +653,44 @@ HTML = """
             const messagesDiv = document.getElementById('messages');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${sender}`;
-            const label = document.createElement('div');
-            label.className = 'message-label';
-            label.textContent = sender === 'user' ? '👤 You' : '🤖 Sully';
-            const bubble = document.createElement('div');
-            bubble.className = 'message-bubble';
-            bubble.textContent = text;
-            messageDiv.appendChild(label);
-            messageDiv.appendChild(bubble);
+
+            if (sender === 'user') {
+                messageDiv.innerHTML = `
+                    <div class="avatar">👤</div>
+                    <div class="message-content">
+                        <div class="message-name">You</div>
+                        <div class="message-bubble">${text}</div>
+                    </div>
+                `;
+            } else {
+                messageDiv.innerHTML = `
+                    <div class="avatar">🎩</div>
+                    <div class="message-content">
+                        <div class="message-name">Sully</div>
+                        <div class="message-bubble">${text}</div>
+                    </div>
+                `;
+            }
+
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
+
         function setLoading(active) {
             document.getElementById('loading').className = active ? 'loading active' : 'loading';
             document.getElementById('send-btn').disabled = active;
             document.getElementById('user-input').disabled = active;
         }
+
         async function sendMessage() {
             const input = document.getElementById('user-input');
             const message = input.value.trim();
             if (!message) return;
+
             addMessage(message, 'user');
             input.value = '';
             setLoading(true);
+
             try {
                 const response = await fetch('/chat', {
                     method: 'POST',
@@ -371,6 +699,7 @@ HTML = """
                 });
                 const data = await response.json();
                 setLoading(false);
+
                 if (data.response) {
                     addMessage(data.response, 'sully');
                 } else {
@@ -381,16 +710,19 @@ HTML = """
                 addMessage('Down the cah-pah with the connection. Try again, boss.', 'sully');
             }
         }
+
         function sendQuick(message) {
             document.getElementById('user-input').value = message;
             sendMessage();
         }
+
         function handleKeyPress(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 sendMessage();
             }
         }
+
         document.getElementById('user-input').focus();
     </script>
 </body>
