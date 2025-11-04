@@ -891,11 +891,19 @@ HTML = """
 
         // Clean text for natural speech (remove emojis, symbols, etc.)
         function cleanTextForSpeech(text) {
-            return text
-                // Remove all emojis and special symbols using comprehensive ranges
-                .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E0}-\u{1F1FF}]/gu, '')
-                // Remove common symbols that are often emojis
-                .replace(/[📈📉📊🏈🏀🍀🐐🚀🇺🇸👤🎩➤➡️]/g, '')
+            // Remove emojis by filtering out characters in emoji ranges
+            let cleaned = text.split('').filter(char => {
+                const code = char.codePointAt(0);
+                // Filter out emoji ranges
+                return !(
+                    (code >= 0x1F300 && code <= 0x1F9FF) || // Misc Symbols and Pictographs
+                    (code >= 0x2600 && code <= 0x26FF) ||   // Misc symbols
+                    (code >= 0x2700 && code <= 0x27BF) ||   // Dingbats
+                    (code >= 0x1F1E0 && code <= 0x1F1FF)    // Flags
+                );
+            }).join('');
+
+            return cleaned
                 // Remove bullet points and list markers
                 .replace(/^[•\-\*]\s*/gm, '')
                 // Remove extra whitespace
