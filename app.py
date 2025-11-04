@@ -1278,8 +1278,8 @@ def tts():
     """Server-side neural TTS proxy (ElevenLabs streaming).
     Requires ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID.
     """
-    if not ELEVENLABS_API_KEY or not ELEVENLABS_VOICE_ID:
-        return Response("TTS not configured", status=400)
+    if not ELEVENLABS_API_KEY:
+        return Response("TTS not configured (missing API key)", status=400)
 
     text = request.args.get('text', '')
     if not text:
@@ -1290,8 +1290,13 @@ def tts():
     if len(text) > 1200:
         text = text[:1200]
 
+    # Allow temporary override via query param for quick testing
+    voice_id = request.args.get('voice_id') or ELEVENLABS_VOICE_ID
+    if not voice_id:
+        return Response("TTS not configured (missing voice id)", status=400)
+
     def generate():
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream?optimize_streaming_latency=2"
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?optimize_streaming_latency=2"
         headers = {
             'xi-api-key': ELEVENLABS_API_KEY,
             'Accept': 'audio/mpeg',
