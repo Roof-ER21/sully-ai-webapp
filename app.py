@@ -778,6 +778,44 @@ HTML = """
         .loading.active {
             display: block;
         }
+
+        /* Voice settings modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        .modal {
+            width: 90%;
+            max-width: 520px;
+            background: #111827;
+            border: 1px solid #374151;
+            border-radius: 16px;
+            padding: 18px;
+            color: #e5e7eb;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        .modal h3 { margin-bottom: 10px; font-size: 18px; }
+        .modal .row { display: flex; gap: 10px; align-items: center; margin: 10px 0; }
+        .modal select, .modal input[type="range"] {
+            flex: 1;
+            background: #0b1220;
+            border: 1px solid #374151;
+            border-radius: 10px;
+            padding: 8px;
+            color: #e5e7eb;
+        }
+        .modal .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+        .btn {
+            background: linear-gradient(135deg, #c41e3a 0%, #8b1528 100%);
+            border: none; color: white; padding: 8px 12px; border-radius: 10px; cursor: pointer;
+        }
+        .btn.secondary { background: #374151; }
+        .voice-button { position: absolute; right: 20px; top: 20px; }
     </style>
 </head>
 <body>
@@ -800,6 +838,9 @@ HTML = """
                 </div>
                 <div class="subtitle">Your Wicked Smaht Boston Assistant</div>
                 <div class="powered-by">Powered by Roof ER - The Roof Docs</div>
+            </div>
+            <div class="voice-button">
+                <button class="btn secondary" onclick="openVoiceModal()">Voice</button>
             </div>
         </div>
 
@@ -864,6 +905,29 @@ HTML = """
             </div>
             <button class="send-button" id="send-btn" onclick="sendMessage()">➤</button>
         </div>
+        <!-- Voice settings modal -->
+        <div class="modal-overlay" id="voice-modal">
+          <div class="modal">
+            <h3>Voice Settings</h3>
+            <div class="row">
+              <label style="width:120px">Available voices</label>
+              <select id="voice-select"></select>
+            </div>
+            <div class="row">
+              <label style="width:120px">Rate</label>
+              <input type="range" id="voice-rate" min="0.5" max="1.5" step="0.05" value="1.0" />
+            </div>
+            <div class="row">
+              <label style="width:120px">Pitch</label>
+              <input type="range" id="voice-pitch" min="0.5" max="1.5" step="0.05" value="1.0" />
+            </div>
+            <div class="actions">
+              <button class="btn secondary" onclick="closeVoiceModal()">Close</button>
+              <button class="btn" onclick="previewVoice()">Preview</button>
+              <button class="btn" onclick="saveVoiceSettings()">Save</button>
+            </div>
+          </div>
+        </div>
     </div>
     <script>
         // Server TTS flag injected by Flask
@@ -903,6 +967,82 @@ HTML = """
                 document.getElementById('mic-btn').classList.remove('listening');
                 document.getElementById('voice-status').classList.remove('active');
             };
+        }
+
+        // Voice selection helpers
+        const PREFERRED_VOICES = ['Alex','Fred','Microsoft Mark','Microsoft David','Microsoft Guy','Google US English','Google en-US','Siri Male','Siri Voice 2 (en-US)','Siri Voice 3 (en-US)'];
+
+        async function ensureVoices(timeoutMs = 1500) {
+            if (!('speechSynthesis' in window)) return [];
+            const synth = window.speechSynthesis;
+            let voices = synth.getVoices();
+            if (voices && voices.length) return voices;
+            voices = await new Promise((resolve) => {
+                const t = setTimeout(() => resolve(synth.getVoices()), timeoutMs);
+                const handler = () => { clearTimeout(t); synth.removeEventListener('voiceschanged', handler); resolve(synth.getVoices()); };
+                synth.addEventListener('voiceschanged', handler);
+            });
+            return voices;
+        }
+
+        function selectBestMaleUsVoice(voices, preferred = PREFERRED_VOICES, lang = 'en-US') {
+            if (!voices || !voices.length) return undefined;
+            const norm = s => s.toLowerCase();
+            const byName = new Map(voices.map(v => [norm(v.name), v]));
+            for (const n of preferred) { const v = byName.get(norm(n)); if (v) return v; }
+            const maleish = n => /(male|alex|fred|mark|david|guy|mike|john)/i.test(n);
+            const us = voices.filter(v => (v.lang||'').toLowerCase().startsWith(lang.toLowerCase()));
+            const m = us.find(v => maleish(v.name)); if (m) return m;
+            if (us.length) return us[0];
+            const en = voices.filter(v => (v.lang||'').toLowerCase().startsWith('en')); if (en.length) return en[0];
+            return voices[0];
+        }
+
+        function getSavedVoiceName() { try { return localStorage.getItem('sully_voice_name') || ''; } catch { return ''; } }
+        function getSavedRate() { try { return parseFloat(localStorage.getItem('sully_voice_rate') || '1.0'); } catch { return 1.0; } }
+        function getSavedPitch() { try { return parseFloat(localStorage.getItem('sully_voice_pitch') || '1.0'); } catch { return 1.0; } }
+
+        async function openVoiceModal() {
+            const overlay = document.getElementById('voice-modal');
+            overlay.style.display = 'flex';
+            const select = document.getElementById('voice-select');
+            select.innerHTML = '';
+            const voices = await ensureVoices();
+            const saved = getSavedVoiceName();
+            voices.forEach(v => {
+                const opt = document.createElement('option');
+                opt.value = v.name;
+                opt.textContent = `${v.name} (${v.lang || ''})`;
+                if (saved && v.name === saved) opt.selected = true;
+                select.appendChild(opt);
+            });
+            document.getElementById('voice-rate').value = String(getSavedRate());
+            document.getElementById('voice-pitch').value = String(getSavedPitch());
+        }
+        function closeVoiceModal() { document.getElementById('voice-modal').style.display = 'none'; }
+        async function previewVoice() {
+            const text = 'This is Sully. How do I sound?';
+            const voices = await ensureVoices();
+            const name = document.getElementById('voice-select').value;
+            const rate = parseFloat(document.getElementById('voice-rate').value);
+            const pitch = parseFloat(document.getElementById('voice-pitch').value);
+            const u = new SpeechSynthesisUtterance(text);
+            u.rate = rate; u.pitch = pitch; u.volume = 1.0; u.lang = 'en-US';
+            const v = voices.find(x => x.name === name) || selectBestMaleUsVoice(voices);
+            if (v) u.voice = v;
+            try { window.speechSynthesis.cancel(); } catch {}
+            window.speechSynthesis.speak(u);
+        }
+        function saveVoiceSettings() {
+            const name = document.getElementById('voice-select').value;
+            const rate = document.getElementById('voice-rate').value;
+            const pitch = document.getElementById('voice-pitch').value;
+            try {
+                localStorage.setItem('sully_voice_name', name);
+                localStorage.setItem('sully_voice_rate', rate);
+                localStorage.setItem('sully_voice_pitch', pitch);
+            } catch {}
+            closeVoiceModal();
         }
 
         // Clean text for natural speech (remove emojis, symbols, etc.)
@@ -954,47 +1094,7 @@ HTML = """
         // Speech Synthesis with Custom Boston Voice
         let currentAudio = null;
 
-        // Ensure Web Speech voices are loaded (Safari/Chrome lazy-load)
-        async function ensureVoices(timeoutMs = 1500) {
-            if (!('speechSynthesis' in window)) return [];
-            const synth = window.speechSynthesis;
-            let voices = synth.getVoices();
-            if (voices && voices.length) return voices;
-            voices = await new Promise((resolve) => {
-                const t = setTimeout(() => resolve(synth.getVoices()), timeoutMs);
-                const handler = () => { clearTimeout(t); synth.removeEventListener('voiceschanged', handler); resolve(synth.getVoices()); };
-                synth.addEventListener('voiceschanged', handler);
-            });
-            return voices;
-        }
-
-        // Boston accent transformation (heuristic non‑rhotic)
-        function bostonizeText(input) {
-            return input.split(/(\s+)/).map(t => /[A-Za-z]/.test(t) ? bostonizeWord(t) : t).join('');
-        }
-        function bostonizeWord(w) {
-            const caps = /^[A-Z]/.test(w);
-            let s = w.toLowerCase();
-            // Notable terms
-            s = s.replace(/\bharvard\b/g, 'hahvahd');
-            s = s.replace(/\byard\b/g, 'yahd');
-            s = s.replace(/\bboston\b/g, 'bahstin');
-            s = s.replace(/\bparty\b/g, 'pahty');
-            // 'ar' -> 'ah' before consonant or end
-            s = s.replace(/ar(?![aeiou])/g, 'ah');
-            // final 'er' -> 'ah'
-            s = s.replace(/er\b/g, 'ah');
-            // vowel+r+consonant -> drop r
-            s = s.replace(/([aeiou])r([bcdfghjklmnpqrstvwxyz])/g, '$1$2');
-            // "ing" -> "in'" sometimes
-            s = s.replace(/ing\b/g, "in'");
-            if (caps) s = s.charAt(0).toUpperCase() + s.slice(1);
-            return s;
-        }
-        function bostonizePhrase(input) {
-            const base = bostonizeText(input);
-            return base.replace(/\b([A-Za-z]+a)\b(\s+)([aeiouAEIOU])/g, (_m, w1, gap, v) => w1 + 'r' + gap + v);
-        }
+        // [Removed] Boston transform (kept minimal and off by default)
 
         async function speak(text) {
             // Clean text for natural speech
@@ -1016,54 +1116,25 @@ HTML = """
                 // Stop any current speech
                 window.speechSynthesis.cancel();
 
-                // Regular male US English voice (no accent transform)
+                // Regular male US English voice (no accent)
                 const utterance = new SpeechSynthesisUtterance(cleanText);
 
                 // Natural male voice settings
-                utterance.rate = 1.0;      // Normal speed
-                utterance.pitch = 1.0;     // Natural pitch for neutral male
+                // Use saved rate/pitch if any
+                const savedRate = getSavedRate();
+                const savedPitch = getSavedPitch();
+                utterance.rate = savedRate || 1.0;      // Normal speed
+                utterance.pitch = savedPitch || 1.0;     // Neutral male
                 utterance.volume = 1.0;
                 utterance.lang = 'en-US';
 
-                // Get all available voices (ensure loaded)
+                // Get all available voices (ensure loaded) and apply saved preference if present
                 const voices = await ensureVoices();
-
-                // Priority list for best male US voices
-                const voicePriority = [
-                    'Alex',                     // macOS - Best male voice
-                    'Fred',                     // macOS - Alternative male
-                    'Microsoft Mark',           // Windows
-                    'Microsoft David',          // Windows
-                    'Google US English',        // Chrome generic label
-                    'Google US English Male',   // Some Chrome variants
-                    'en-US-Standard-D',         // Google Cloud male
-                    'en-US-Standard-B',         // Google Cloud male alt
-                ];
-
-                // Find the best available voice
-                let selectedVoice = null;
-                // Try exact name matches first
-                for (const voiceName of voicePriority) {
-                    selectedVoice = voices.find(v => v.name === voiceName);
-                    if (selectedVoice) {
-                        console.log('Using voice:', selectedVoice.name);
-                        break;
-                    }
-                }
-                // If no exact match, try partial matches for male US voices
-                if (!selectedVoice) {
-                    selectedVoice = voices.find(v =>
-                        (v.lang || '').toLowerCase().startsWith('en-us') &&
-                        /(male|alex|fred|mark|david|guy|mike|john)/i.test(v.name)
-                    );
-                }
-                // Final fallback: any US English voice
-                if (!selectedVoice) {
-                    selectedVoice = voices.find(v => (v.lang || '').toLowerCase().startsWith('en-us'));
-                }
-                if (selectedVoice) {
-                    utterance.voice = selectedVoice;
-                    console.log('Selected voice:', selectedVoice.name, selectedVoice.lang);
+                const savedName = getSavedVoiceName();
+                let selected = (savedName && voices.find(v => v.name === savedName)) || selectBestMaleUsVoice(voices);
+                if (selected) {
+                    utterance.voice = selected;
+                    console.log('Selected voice:', selected.name, selected.lang);
                 }
 
                 window.speechSynthesis.speak(utterance);
