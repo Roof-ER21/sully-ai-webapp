@@ -2275,6 +2275,15 @@ HTML = """
             <button class="action-pill" onclick="sendQuick('What\\'s the latest Patriots news?')">
                 <span>🏈</span> Patriots
             </button>
+            <button class="action-pill" onclick="sendQuick('What\\'s the latest on Trump and DJT?')">
+                <span>🇺🇸</span> Trump
+            </button>
+            <button class="action-pill" onclick="sendQuick('What\\'s the latest on Elon and Tesla?')">
+                <span>⚡</span> Elon
+            </button>
+            <button class="action-pill" onclick="sendQuick('What\\'s Tom Brady up to?')">
+                <span>🐐</span> Brady
+            </button>
         </div>
 
         <!-- Stock Cards Grid -->
@@ -2332,33 +2341,6 @@ HTML = """
             <div class="modal-header">
                 <div class="modal-title">⚙️ Settings</div>
                 <button class="close-button" onclick="closeSettings()">×</button>
-            </div>
-
-            <div class="setting-group">
-                <label class="setting-label">Boston Intensity</label>
-                <div class="setting-description">Control how much Boston personality Sully shows (1-10)</div>
-                <input type="range" class="setting-range" id="boston-intensity" min="1" max="10" value="2" oninput="document.getElementById('boston-value').textContent = this.value">
-                <div style="text-align: center; margin-top: 8px; color: var(--text-secondary);">
-                    <span id="boston-value">2</span> / 10
-                </div>
-            </div>
-
-            <div class="setting-group">
-                <label class="setting-label">Voice Rate</label>
-                <div class="setting-description">How fast Sully speaks (0.5 = slow, 1.5 = fast)</div>
-                <input type="range" class="setting-range" id="voice-rate" min="0.5" max="1.5" step="0.05" value="0.95" oninput="document.getElementById('rate-value').textContent = this.value">
-                <div style="text-align: center; margin-top: 8px; color: var(--text-secondary);">
-                    <span id="rate-value">0.95</span>x
-                </div>
-            </div>
-
-            <div class="setting-group">
-                <label class="setting-label">Voice Pitch</label>
-                <div class="setting-description">How deep Sully's voice is (0.5 = deep, 2.0 = high)</div>
-                <input type="range" class="setting-range" id="voice-pitch" min="0.5" max="2.0" step="0.05" value="0.85" oninput="document.getElementById('pitch-value').textContent = this.value">
-                <div style="text-align: center; margin-top: 8px; color: var(--text-secondary);">
-                    <span id="pitch-value">0.85</span>
-                </div>
             </div>
 
             <div class="setting-group">
@@ -3784,9 +3766,10 @@ def get_briefing():
         patriots_news = aggregator.search_live_news('patriots')
         celtics_news = aggregator.search_live_news('celtics')
 
-        # Fetch VIP news for Elon Musk and Trump
+        # Fetch VIP news for Elon Musk, Trump, and Tom Brady
         elon_news = aggregator.search_vip_news('elon_musk')
         trump_news = aggregator.search_vip_news('trump')
+        brady_news = aggregator.search_vip_news('tom_brady')
 
         # Combine all news sections
         news_section = f"""
@@ -3794,6 +3777,7 @@ def get_briefing():
 {celtics_news}
 {elon_news}
 {trump_news}
+{brady_news}
 """
 
         # Create briefing prompt based on time of day
@@ -3809,7 +3793,7 @@ BREAKING NEWS & UPDATES:
 1. Portfolio Status: Quick summary of overall performance
 2. Top 3 Insights: Most important things to know today
 3. Key Movers: Stocks with significant changes (>3%)
-4. Sports & VIP Updates: Brief mention of Patriots, Celtics, Elon, and Trump news highlights
+4. Sports & VIP Updates: Brief mention of Patriots, Celtics, Brady, Elon, and Trump news highlights
 5. Action Items: What to watch today
 
 Keep it under 250 words. Be direct and actionable. Use bullet points."""
@@ -3826,7 +3810,7 @@ BREAKING NEWS & UPDATES:
 1. Daily Performance: How did the portfolio perform today?
 2. Key Winners & Losers: Top 3 of each
 3. Notable Events: Any significant market moves or news
-4. Sports & VIP Updates: Brief mention of Patriots, Celtics, Elon, and Trump news highlights
+4. Sports & VIP Updates: Brief mention of Patriots, Celtics, Brady, Elon, and Trump news highlights
 5. Tomorrow's Watch List: What to monitor
 
 Keep it under 250 words. Be direct and insightful."""
