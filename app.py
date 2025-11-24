@@ -2984,36 +2984,53 @@ HTML = """
             // Prefer server TTS if enabled (ElevenLabs)
             if (window.SERVER_TTS_ENABLED) {
                 try {
-                    const audio = new Audio('/tts?text=' + encodeURIComponent(cleanText));
-                    audio.play().catch(err => console.warn('Audio play blocked:', err));
+                    const ttsUrl = '/tts?text=' + encodeURIComponent(cleanText);
+                    const audio = new Audio(ttsUrl);
+
+                    // Handle audio loading errors
+                    audio.addEventListener('error', (e) => {
+                        console.warn('Server TTS audio load failed, falling back to Web Speech:', e);
+                        fallbackToWebSpeech(cleanText);
+                    });
+
+                    // Try to play
+                    audio.play().catch(err => {
+                        console.warn('Audio play blocked or failed, falling back to Web Speech:', err);
+                        fallbackToWebSpeech(cleanText);
+                    });
                     return;
                 } catch (e) {
-                    console.warn('Server TTS failed, falling back to Web Speech:', e);
+                    console.warn('Server TTS error, falling back to Web Speech:', e);
                 }
             }
+
+            // Fallback to browser Web Speech API
+            fallbackToWebSpeech(cleanText);
+        }
+
+        function fallbackToWebSpeech(text) {
+            if (!window.speechSynthesis) return;
 
             // Use browser's speech synthesis with optimized settings for natural sound
-            if ('speechSynthesis' in window) {
-                window.speechSynthesis.cancel();
+            window.speechSynthesis.cancel();
 
-                const utterance = new SpeechSynthesisUtterance(cleanText);
+            const utterance = new SpeechSynthesisUtterance(text);
 
-                // Optimized settings for natural, confident male voice
-                // Slightly slower = more natural and authoritative
-                utterance.rate = 0.95;      // Slightly slower than default (more natural)
-                utterance.pitch = 0.85;     // Deeper pitch (more masculine, like Elon/Trump)
-                utterance.volume = 1.0;     // Full volume
-                utterance.lang = 'en-US';
+            // Optimized settings for natural, confident male voice
+            // Slightly slower = more natural and authoritative
+            utterance.rate = 0.95;      // Slightly slower than default (more natural)
+            utterance.pitch = 0.85;     // Deeper pitch (more masculine, like Elon/Trump)
+            utterance.volume = 1.0;     // Full volume
+            utterance.lang = 'en-US';
 
-                // Automatically select best natural male voice
-                const voice = getBestMaleUsVoice();
-                if (voice) {
-                    utterance.voice = voice;
-                    console.log('Using voice:', voice.name, '| Rate:', utterance.rate, '| Pitch:', utterance.pitch);
-                }
-
-                window.speechSynthesis.speak(utterance);
+            // Automatically select best natural male voice
+            const voice = getBestMaleUsVoice();
+            if (voice) {
+                utterance.voice = voice;
+                console.log('Using voice:', voice.name, '| Rate:', utterance.rate, '| Pitch:', utterance.pitch);
             }
+
+            window.speechSynthesis.speak(utterance);
         }
 
         // Load voices (needed for some browsers)
@@ -3580,11 +3597,12 @@ def tts():
     Requires ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID.
     """
     if not ELEVENLABS_API_KEY:
-        return Response("TTS not configured (missing API key)", status=400)
+        print("❌ TTS Error: ELEVENLABS_API_KEY not set")
+        return Response("TTS not configured (missing API key)", status=400, mimetype='text/plain')
 
     text = request.args.get('text', '')
     if not text:
-        return Response("Missing text", status=400)
+        return Response("Missing text", status=400, mimetype='text/plain')
 
     # keep payload reasonable
     text = text.strip()
@@ -3594,7 +3612,10 @@ def tts():
     # Allow temporary override via query param for quick testing
     voice_id = request.args.get('voice_id') or ELEVENLABS_VOICE_ID
     if not voice_id:
-        return Response("TTS not configured (missing voice id)", status=400)
+        print("❌ TTS Error: ELEVENLABS_VOICE_ID not set")
+        return Response("TTS not configured (missing voice id)", status=400, mimetype='text/plain')
+
+    print(f"🎤 TTS Request: text='{text[:50]}...' voice_id={voice_id}")
 
     def generate():
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?optimize_streaming_latency=2"
@@ -3615,13 +3636,19 @@ def tts():
         }
         try:
             with requests.post(url, headers=headers, json=payload, stream=True, timeout=60) as r:
+                if r.status_code != 200:
+                    error_msg = f"ElevenLabs API error: {r.status_code} - {r.text[:200]}"
+                    print(f"❌ TTS Error: {error_msg}")
+                    return
                 r.raise_for_status()
+                print("✅ TTS streaming audio from ElevenLabs")
                 for chunk in r.iter_content(chunk_size=4096):
                     if chunk:
                         yield chunk
         except Exception as e:
             # surface error to client; do not crash server
             err = f"TTS upstream error: {str(e)}"
+            print(f"❌ TTS Exception: {err}")
             yield b''
 
     return Response(stream_with_context(generate()), mimetype='audio/mpeg')
