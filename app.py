@@ -4,7 +4,7 @@ Sully AI - Production Web App
 Zero setup for Boss Man - just send him the URL!
 """
 
-from flask import Flask, render_template_string, request, jsonify, Response, stream_with_context
+from flask import Flask, render_template_string, request, jsonify, Response, stream_with_context, session, send_file
 import requests
 from datetime import datetime
 import json
@@ -12,14 +12,22 @@ from typing import Dict, List, Any
 from groq import Groq
 import pytz
 import os
+from dotenv import load_dotenv
+import sqlite3
+from functools import wraps
+import secrets
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))  # Session management
 
 # Configuration from environment (will be set in Railway)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY", "")  # Optional: for live news search
 STOCK_SYMBOLS = os.getenv("STOCK_SYMBOLS", "TSLA,AAPL,NVDA,MSFT,GOOGL,AMZN,META,DJT").split(',')
-BOSTON_INTENSITY = int(os.getenv("BOSTON_INTENSITY", "7"))
+BOSTON_INTENSITY = int(os.getenv("BOSTON_INTENSITY", "2"))
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2")
@@ -47,6 +55,157 @@ VIP_TRACKING = {
         'emoji': '🇺🇸'
     }
 }
+
+# ===== DATABASE SETUP =====
+DB_PATH = 'sully_data.db'
+
+def get_db():
+    """Get database connection"""
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row  # Enable column access by name
+    return db
+
+def init_db():
+    """Initialize database with schema"""
+    db = get_db()
+    cursor = db.cursor()
+
+    # Users table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP
+        )
+    ''')
+
+    # User preferences table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS preferences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            theme TEXT DEFAULT 'dark',
+            boston_intensity INTEGER DEFAULT 2,
+            voice_enabled BOOLEAN DEFAULT 1,
+            voice_rate REAL DEFAULT 0.95,
+            voice_pitch REAL DEFAULT 0.85,
+            alert_threshold REAL DEFAULT 5.0,
+            auto_refresh BOOLEAN DEFAULT 1,
+            refresh_interval INTEGER DEFAULT 300,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+
+    # Custom watchlists table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS watchlists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            symbol TEXT NOT NULL,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            UNIQUE(user_id, symbol)
+        )
+    ''')
+
+    # Conversation history table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            response TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+
+    # Saved briefings table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS briefings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            briefing_type TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+
+    # Achievements table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS achievements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            achievement_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+
+    # User stats table for context awareness
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            total_chats INTEGER DEFAULT 0,
+            total_briefings INTEGER DEFAULT 0,
+            favorite_stocks TEXT,
+            last_active TIMESTAMP,
+            streak_days INTEGER DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+
+    db.commit()
+    db.close()
+
+def get_or_create_user(username='boss'):
+    """Get or create default user"""
+    db = get_db()
+    cursor = db.cursor()
+
+    # Try to get user
+    cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
+    user = cursor.fetchone()
+
+    if not user:
+        # Create default user
+        cursor.execute('INSERT INTO users (username, email) VALUES (?, ?)',
+                      (username, f'{username}@rooferdocs.com'))
+        user_id = cursor.lastrowid
+
+        # Create default preferences
+        cursor.execute('''
+            INSERT INTO preferences (user_id) VALUES (?)
+        ''', (user_id,))
+
+        db.commit()
+        cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+        user = cursor.fetchone()
+
+    db.close()
+    return dict(user)
+
+def login_required(f):
+    """Decorator to require login for routes"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            # Auto-login as default user for now
+            user = get_or_create_user('boss')
+            session['user_id'] = user['id']
+            session['username'] = user['username']
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Initialize database on startup
+init_db()
 
 # Global state
 aggregator = None
@@ -209,75 +368,58 @@ class SullyAI:
         self.system_prompt = self._build_system_prompt()
 
     def _build_system_prompt(self) -> str:
-        return f"""You are Sully, a wicked smaht AI assistant from Boston. You work for Roof ER (The Roof Docs),
-the best damn storm restoration roofing company from Virginia to Pennsylvania (DMV area represent!). You're helping
-the boss man stay on top of his stocks, the Patriots, the Celtics, and fantasy football.
+        return f"""You are Sully, a knowledgeable AI assistant from Boston. You work for Roof ER (The Roof Docs),
+a leading storm restoration roofing company serving Virginia to Pennsylvania (DMV area). You're helping
+the boss stay informed about stocks, the Patriots, the Celtics, and fantasy football.
 
 PERSONALITY TRAITS:
-- Boston accent level: {self.boston_intensity}/10 - Use it naturally, not forced. Drop R's (cah, heah, pahk),
-  use "wicked" as intensifier, throw in "kid", "guy", "boss"
-- You're smart about markets and sports, not just accent jokes
-- You LOVE New England sports - Patriots and Celtics are your LIFE. When they win, you're hyped!
-- You're proud to work for Roof ER and bridge Boston attitude with DMV territory (VA/MD/PA)
-- You're funny but respectful - boss man is the boss
+- Professional but friendly - you're smart about markets and sports
+- Subtle Boston influence: {self.boston_intensity}/10 - Keep it natural and professional, just a hint of personality
+- You're passionate about New England sports - Patriots and Celtics fan
+- You're proud to work for Roof ER and serve the DMV territory (VA/MD/PA)
+- You're helpful and respectful - provide clear, actionable insights
 
-BOSTON HUMOR & SAYINGS (use naturally):
-- "That's wicked good/bad" - Intensifier for everything
-- "Pahk the cah" - Classic Boston, but don't overdo it
-- "Down the cah-pah" - Something's broken/wrong
-- "Masshole" pride - Own it with a wink
-- "The T" - Boston transit (always late jokes)
-- "Lost your khakis? Lost your car keys!" - Boston wordplay
-- "Southie chair" - Saving parking spots (local humor)
-- Patriots/Tom Brady references - You miss him but Drake Maye is the future
-- Celtics dynasty talk - Banner 18 baby!
-- Dunkin' Donuts > Starbucks (always)
+COMMUNICATION STYLE:
+- Be conversational but professional
+- Use occasional terms like "boss", "looking good", "solid"
+- Keep it real and direct - no excessive slang
+- Focus on being helpful and informative first
+- You can be enthusiastic about sports wins without going overboard
 
-DMV AREA AWARENESS (you work here now):
-- You respect the DMV (DC/Maryland/Virginia) - it's good roofing territory
-- "Washing-TON of opportunities" - Weight pun for DMV
-- Traffic jokes - "495 at rush hour? Wicked nightmare, kid"
-- You bridge Boston sports passion with DMV business savvy
-- Maryland crab cakes are "not bad for non-New England seafood"
+DMV AREA AWARENESS:
+- You serve the DMV region (DC/Maryland/Virginia/Pennsylvania)
+- Professional knowledge of the roofing and storm restoration business
+- Bridge New England sports passion with regional business insights
 
 VIP PERSONALITIES YOU TRACK:
-🐐 TOM BRADY:
-- The GOAT, your hero, Boston legend (6 rings with Pats!)
-- Now retired but working at Fox Sports as analyst
-- TB12 Sports (fitness/nutrition brand)
-- Brady Brand (clothing line)
-- Still the greatest QB ever, no debate
-- "TB12 is the system, kid!"
+TOM BRADY:
+- Patriots legend, 6 Super Bowl rings with New England
+- Now retired, working at Fox Sports as analyst
+- TB12 Sports (fitness/nutrition) and Brady Brand (clothing)
+- Considered one of the greatest QBs of all time
 
-🚀 ELON MUSK:
-- Tesla CEO (stock symbol: TSLA) - Boss man probably owns it
+ELON MUSK:
+- Tesla CEO (stock symbol: TSLA)
 - SpaceX, X (Twitter), Neuralink, Boring Company
-- Love him or hate him, he's changing the game
-- Tesla stock moves = big portfolio impact
-- "When Elon tweets, markets move"
-- Track TSLA stock closely for boss man
+- Major market influencer, track TSLA stock movements
+- News about Elon often impacts market sentiment
 
-🇺🇸 DONALD TRUMP:
-- Former President, big business guy
+DONALD TRUMP:
+- Former President and businessman
 - Trump Media & Technology Group (stock: DJT)
-- Truth Social platform
-- Trump Organization real estate empire
-- Major news maker - always in headlines
-- "Love him or not, he's box office, kid"
-- Track DJT stock for boss man
+- Truth Social platform and Trump Organization
+- Major news maker with market impact
 
 ROOFING CONNECTION:
-- Storm season = business season
-- "If it's rainin', we're gainin'" - roofing motto
-- Connect weather to stocks ("Stormy markets need solid foundations")
+- Storm season drives roofing business
 - Roof ER handles hail, wind, storm damage across VA/MD/PA
+- Connect weather patterns to business insights when relevant
 
-SPORTS & STOCKS:
-- When stocks moon: "We're goin' to the moon, kid! Time to buy that boat!"
-- When stocks tank: "Ah, markets are cyclical like New England weather - we'll bounce back"
-- Patriots talk: Get hyped about Drake Maye, but realistic about rebuild
-- Celtics: Brown/Tatum two-way dominance, Banner 18 energy
-- Fantasy: "Start your studs" mentality
+SPORTS & MARKET INSIGHTS:
+- Provide clear, objective market analysis
+- Be enthusiastic about Patriots and Celtics but stay professional
+- Focus on actionable insights rather than hype
+- Keep analysis grounded and realistic
 
 RESPONSE FORMATTING (CRITICAL):
 - Break up responses into SHORT paragraphs (2-3 sentences max)
@@ -299,19 +441,19 @@ NOT like this:
 "📊 TSLA: $245.50 📈 +$12.30 (+5.2%) 🚀"
 
 Example Good Format:
-"Hey boss! TSLA is up big today.
+"TSLA is showing strong performance today.
 
 TSLA
 Price: $245.50
 Change: UP $12.30 (+5.2%)
 Status: Strong momentum
 
-The market's treatin' ya right. Keep an eye on earnings next week though."
+Good news overall. Worth keeping an eye on earnings next week."
 
 Example Bad Format (DON'T DO THIS):
-"Hey boss 📈 TSLA is up 5% today at $245.50 which is up $12.30 🚀 and the volume is looking solid 📊 and the momentum is strong so the market is treating you right today kid 💰"
+"Hey boss 📈 TSLA is up 5% today at $245.50 which is up $12.30 🚀 and the volume is looking solid 📊 and the momentum is strong so the market is treating you right today 💰"
 
-Keep it natural - you're a Boston guy in DMV territory, helping boss man crush it. Be genuinely helpful with sharp wit AND easy-to-read formatting."""
+Keep it professional and helpful - provide clear insights with easy-to-read formatting."""
 
     def chat(self, user_message: str, current_data: Dict[str, Any] = None) -> str:
         messages = [{"role": "system", "content": self.system_prompt}]
@@ -344,10 +486,22 @@ HTML = """
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sully AI - Boston Sports Assistant | Roof ER</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎩</text></svg>">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+
+    <!-- PWA Meta Tags -->
+    <meta name="description" content="Your AI-powered executive assistant for stocks, sports, and insights">
+    <meta name="theme-color" content="#3b82f6">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Sully AI">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='128' fill='%233b82f6'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='280' fill='white'>📊</text></svg>">
+
+    <title>Sully AI - Executive Dashboard | Roof ER</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -355,55 +509,94 @@ HTML = """
             box-sizing: border-box;
         }
 
+        :root {
+            --bg-primary: #0a0e27;
+            --bg-secondary: #121729;
+            --bg-card: rgba(255, 255, 255, 0.05);
+            --border-color: rgba(255, 255, 255, 0.1);
+            --text-primary: #ffffff;
+            --text-secondary: #9ca3af;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --glass-bg: rgba(255, 255, 255, 0.03);
+            --glass-border: rgba(255, 255, 255, 0.08);
+        }
+
         body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
-            color: #ffffff;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #0a0e27 0%, #1a1535 50%, #0f1a3d 100%);
+            background-attachment: fixed;
+            color: var(--text-primary);
             min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
+            padding: 0;
+            margin: 0;
+            overflow-x: hidden;
+        }
+
+        /* Animated gradient mesh background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background:
+                radial-gradient(circle at 20% 80%, rgba(16, 185, 129, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 40% 40%, rgba(139, 92, 246, 0.05) 0%, transparent 50%);
+            animation: meshMove 20s ease-in-out infinite;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        @keyframes meshMove {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            33% { transform: translate(5%, 5%) rotate(5deg); }
+            66% { transform: translate(-5%, 5%) rotate(-5deg); }
         }
 
         .app-container {
-            width: 100%;
-            max-width: 420px;
-            background: #0a0a0a;
-            border-radius: 30px;
-            overflow: hidden;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
-            border: 2px solid #1a1a1a;
-        }
-
-        /* Header Section */
-        .header {
-            background: linear-gradient(135deg, #c41e3a 0%, #8b1528 100%);
-            padding: 30px 25px 25px;
             position: relative;
-            overflow: hidden;
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            z-index: 1;
         }
 
-        .header::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            right: -20%;
-            width: 300px;
-            height: 300px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 50%;
+        /* Modern Glassmorphism Header */
+        .header {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
         }
 
-        .header::after {
-            content: '';
-            position: absolute;
-            bottom: -30%;
-            left: -15%;
-            width: 250px;
-            height: 250px;
-            background: rgba(0, 0, 0, 0.1);
-            border-radius: 50%;
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
 
         .logo-section {
@@ -417,134 +610,740 @@ HTML = """
         }
 
         .logo-circle {
-            width: 70px;
-            height: 70px;
-            background: white;
-            border-radius: 50%;
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-            border: 3px solid #1a1a1a;
-        }
-
-        .logo-text {
             font-size: 24px;
-            font-weight: 900;
-            color: #c41e3a;
-            text-align: center;
-            line-height: 1;
         }
 
-        .title-section {
-            text-align: center;
-            position: relative;
-            z-index: 2;
-        }
-
-        .main-title {
-            font-size: 32px;
-            font-weight: 900;
-            margin-bottom: 5px;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-        }
-
-        .boston-hat {
-            font-size: 28px;
+        .title-section h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin: 0;
+            color: var(--text-primary);
         }
 
         .subtitle {
             font-size: 14px;
-            font-weight: 600;
-            opacity: 0.95;
-            margin-bottom: 3px;
+            font-weight: 400;
+            color: var(--text-secondary);
+            margin-top: 4px;
         }
 
-        .powered-by {
-            font-size: 11px;
-            opacity: 0.8;
+        /* Portfolio Summary Section */
+        .portfolio-summary {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .portfolio-value {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .portfolio-label {
+            font-size: 14px;
             font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
         }
 
-        /* Chat Area */
-        .chat-area {
-            background: #0f0f0f;
-            min-height: 400px;
-            max-height: 500px;
-            overflow-y: auto;
-            padding: 20px;
+        .portfolio-amount {
+            font-size: 56px;
+            font-weight: 800;
+            color: var(--text-primary);
+            line-height: 1;
+            margin-bottom: 12px;
         }
 
-        /* Category Pills */
-        .category-pills {
-            display: flex;
-            gap: 10px;
-            padding: 20px;
-            background: #0f0f0f;
-            flex-wrap: wrap;
-            justify-content: center;
-            border-top: 1px solid #1a1a1a;
+        .portfolio-change {
+            font-size: 20px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 12px;
         }
 
-        .pill {
-            padding: 10px 18px;
-            border-radius: 25px;
-            font-size: 13px;
+        .portfolio-change.positive {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--accent-green);
+        }
+
+        .portfolio-change.negative {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--accent-red);
+        }
+
+        .portfolio-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+            margin-top: 24px;
+        }
+
+        .stat-card {
+            text-align: center;
+            padding: 16px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            font-size: 24px;
             font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        /* Stock Cards Grid */
+        .stocks-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+
+        .stock-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 24px;
             cursor: pointer;
-            transition: all 0.3s ease;
-            border: 2px solid;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stock-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .stock-header {
             display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+        }
+
+        .stock-symbol {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .stock-price {
+            font-size: 32px;
+            font-weight: 800;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .stock-change {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .stock-change.positive {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--accent-green);
+        }
+
+        .stock-change.negative {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+        }
+
+        .stock-chart {
+            height: 120px;
+            margin-top: 16px;
+            position: relative;
+        }
+
+        /* Sparkline for quick trends */
+        .sparkline {
+            width: 100%;
+            height: 60px;
+            margin-top: 12px;
+        }
+
+        /* Chat Section */
+        .chat-section {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .chat-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .chat-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+        }
+
+        .chat-area {
+            min-height: 300px;
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 24px;
+        }
+
+        .action-pill {
+            padding: 12px 20px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid var(--border-color);
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            color: var(--text-primary);
+            display: inline-flex;
             align-items: center;
             gap: 8px;
         }
 
-        .pill.celtics {
-            background: linear-gradient(135deg, #007A33 0%, #005a26 100%);
-            border-color: #00a84f;
+        .action-pill:hover {
+            transform: translateY(-2px) scale(1.02);
+            border-color: var(--accent-blue);
+            box-shadow: 0 8px 24px rgba(59, 130, 246, 0.2);
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .action-pill:active {
+            transform: translateY(0) scale(0.98);
+        }
+
+        /* Insights & Alerts Section */
+        .insights-section {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .insights-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .insights-header h2 {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin: 0;
+        }
+
+        .briefing-button {
+            padding: 10px 20px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%);
+            border: none;
             color: white;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
         }
 
-        .pill.celtics:hover {
+        .briefing-button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(0, 122, 51, 0.4);
+            box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
         }
 
-        .pill.patriots {
-            background: linear-gradient(135deg, #002244 0%, #001a33 100%);
-            border-color: #0044aa;
+        /* Icon Button */
+        .icon-button {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            color: var(--text-primary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+
+        .icon-button:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Settings & History Modals */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(10px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 32px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .modal-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .close-button {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .close-button:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+        }
+
+        .setting-group {
+            margin-bottom: 24px;
+        }
+
+        .setting-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .setting-description {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        .setting-input {
+            width: 100%;
+            padding: 12px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .setting-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .setting-range {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.1);
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .setting-range::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--accent-blue);
+            cursor: pointer;
+        }
+
+        .setting-toggle {
+            position: relative;
+            width: 48px;
+            height: 24px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .setting-toggle.active {
+            background: var(--accent-green);
+        }
+
+        .setting-toggle::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: white;
+            transition: all 0.3s;
+        }
+
+        .setting-toggle.active::after {
+            transform: translateX(24px);
+        }
+
+        .save-button {
+            width: 100%;
+            padding: 14px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%);
+            border: none;
             color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
         }
 
-        .pill.patriots:hover {
+        .save-button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(0, 34, 68, 0.4);
+            box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
         }
 
-        .pill.news {
-            background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
-            border-color: #9ca3af;
-            color: white;
+        .history-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
         }
 
-        .pill.news:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(107, 114, 128, 0.4);
+        .history-timestamp {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
         }
 
-        .pill.stocks {
-            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
-            border-color: #22c55e;
-            color: white;
+        .history-message {
+            font-size: 14px;
+            color: var(--accent-blue);
+            margin-bottom: 8px;
         }
 
-        .pill.stocks:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(22, 163, 74, 0.4);
+        .history-response {
+            font-size: 14px;
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        /* Alerts Banner */
+        .alerts-banner {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.05) 100%);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 16px;
+            padding: 16px 20px;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .alerts-banner.active {
+            display: block;
+            animation: slideDown 0.4s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .alert-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            margin-bottom: 8px;
+        }
+
+        .alert-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .alert-icon {
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+
+        .alert-content {
+            flex: 1;
+        }
+
+        .alert-message {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .alert-severity {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Insight Cards */
+        .insights-grid {
+            display: grid;
+            gap: 12px;
+        }
+
+        .insight-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 16px;
+            transition: all 0.3s;
+        }
+
+        .insight-card:hover {
+            background: rgba(255, 255, 255, 0.04);
+            border-color: var(--accent-blue);
+        }
+
+        .insight-card.positive {
+            border-left: 4px solid var(--accent-green);
+        }
+
+        .insight-card.negative {
+            border-left: 4px solid var(--accent-red);
+        }
+
+        .insight-card.neutral {
+            border-left: 4px solid var(--text-secondary);
+        }
+
+        .insight-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .insight-symbol {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--accent-blue);
+        }
+
+        .insight-type {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+        }
+
+        .insight-message {
+            font-size: 14px;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }
+
+        .insight-action {
+            font-size: 12px;
+            color: var(--accent-blue);
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* Briefing Modal */
+        .briefing-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(10px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            padding: 20px;
+        }
+
+        .briefing-modal.active {
+            display: flex;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .briefing-content {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 24px;
+            padding: 32px;
+            max-width: 600px;
+            width: 100%;
+            max-height: 80vh;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        .briefing-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            color: var(--text-primary);
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .briefing-close:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: rotate(90deg);
+        }
+
+        .briefing-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .briefing-subtitle {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+        }
+
+        .briefing-text {
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .portfolio-amount {
+                font-size: 40px;
+            }
+
+            .stocks-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .portfolio-stats {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .header-content {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .briefing-content {
+                padding: 24px;
+            }
         }
 
         /* Message Bubble */
@@ -779,159 +1578,967 @@ HTML = """
             display: block;
         }
 
-        /* Voice settings modal */
-        .modal-overlay {
+        /* Pull-to-Refresh Indicator */
+        .pull-to-refresh {
             position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.6);
-            display: none;
+            top: -60px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 60px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border-radius: 50%;
+            display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 2000;
+            transition: all 0.3s;
+            z-index: 999;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
         }
-        .modal {
+
+        .pull-to-refresh.active {
+            top: 20px;
+        }
+
+        .pull-to-refresh.refreshing {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: translateX(-50%) rotate(0deg); }
+            to { transform: translateX(-50%) rotate(360deg); }
+        }
+
+        /* PWA Install Banner */
+        .install-banner {
+            position: fixed;
+            bottom: -100px;
+            left: 50%;
+            transform: translateX(-50%);
             width: 90%;
-            max-width: 520px;
-            background: #111827;
-            border: 1px solid #374151;
+            max-width: 400px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
             border-radius: 16px;
-            padding: 18px;
-            color: #e5e7eb;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: bottom 0.3s ease-out;
+            z-index: 1001;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
         }
-        .modal h3 { margin-bottom: 10px; font-size: 18px; }
-        .modal .row { display: flex; gap: 10px; align-items: center; margin: 10px 0; }
-        .modal select, .modal input[type="range"] {
+
+        .install-banner.show {
+            bottom: 20px;
+        }
+
+        .install-icon {
+            font-size: 32px;
+        }
+
+        .install-text {
             flex: 1;
-            background: #0b1220;
-            border: 1px solid #374151;
-            border-radius: 10px;
+        }
+
+        .install-text h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .install-text p {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .install-button {
+            padding: 8px 16px;
+            border-radius: 8px;
+            background: var(--accent-blue);
+            border: none;
+            color: white;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .close-install {
             padding: 8px;
-            color: #e5e7eb;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 20px;
+            line-height: 1;
         }
-        .modal .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
-        .btn {
-            background: linear-gradient(135deg, #c41e3a 0%, #8b1528 100%);
-            border: none; color: white; padding: 8px 12px; border-radius: 10px; cursor: pointer;
+
+        /* Mobile-Responsive Design */
+        @media (max-width: 768px) {
+            .app-container {
+                padding: 12px;
+            }
+
+            .header {
+                padding: 16px;
+                border-radius: 16px;
+                margin-bottom: 16px;
+            }
+
+            .header-content {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .header-right {
+                width: 100%;
+                justify-content: space-between;
+                margin-top: 12px;
+            }
+
+            .logo-circle {
+                width: 40px;
+                height: 40px;
+                font-size: 20px;
+            }
+
+            h1 {
+                font-size: 20px;
+            }
+
+            .subtitle {
+                font-size: 12px;
+            }
+
+            .portfolio-summary {
+                padding: 20px;
+                border-radius: 16px;
+                margin-bottom: 16px;
+            }
+
+            .portfolio-amount {
+                font-size: 36px;
+            }
+
+            .portfolio-change {
+                font-size: 14px;
+            }
+
+            .portfolio-stats {
+                flex-direction: column;
+                gap: 12px;
+            }
+
+            .stat-card {
+                padding: 12px;
+            }
+
+            .stat-value {
+                font-size: 18px;
+            }
+
+            .stat-label {
+                font-size: 11px;
+            }
+
+            .stocks-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+                margin-bottom: 16px;
+            }
+
+            .stock-card {
+                padding: 16px;
+            }
+
+            .insights-section {
+                padding: 20px;
+                border-radius: 16px;
+                margin-bottom: 16px;
+            }
+
+            .insights-header h2 {
+                font-size: 18px;
+            }
+
+            .briefing-button {
+                padding: 8px 16px;
+                font-size: 12px;
+            }
+
+            .chat-section {
+                padding: 16px;
+                border-radius: 16px;
+            }
+
+            .quick-actions {
+                gap: 8px;
+                margin-bottom: 12px;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                padding-bottom: 8px;
+            }
+
+            .quick-btn {
+                padding: 8px 16px;
+                font-size: 12px;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+
+            .chat-messages {
+                max-height: 300px;
+                margin-bottom: 12px;
+            }
+
+            .message {
+                padding: 12px;
+                font-size: 14px;
+            }
+
+            .input-section {
+                gap: 8px;
+            }
+
+            .mic-button,
+            .send-button {
+                width: 44px;
+                height: 44px;
+                font-size: 18px;
+            }
+
+            .input-field {
+                padding: 12px 16px;
+                font-size: 14px;
+            }
+
+            .modal-content {
+                width: 95%;
+                padding: 24px;
+                max-height: 85vh;
+            }
+
+            .modal-title {
+                font-size: 20px;
+            }
+
+            .setting-group {
+                margin-bottom: 20px;
+            }
+
+            .history-item {
+                padding: 12px;
+            }
+
+            .icon-button {
+                width: 36px;
+                height: 36px;
+            }
         }
-        .btn.secondary { background: #374151; }
-        .voice-button { position: absolute; right: 20px; top: 20px; }
+
+        /* Extra small devices */
+        @media (max-width: 480px) {
+            .app-container {
+                padding: 8px;
+            }
+
+            .header {
+                padding: 12px;
+            }
+
+            h1 {
+                font-size: 18px;
+            }
+
+            .portfolio-amount {
+                font-size: 28px;
+            }
+
+            .stock-symbol {
+                font-size: 16px;
+            }
+
+            .stock-price {
+                font-size: 18px;
+            }
+
+            .quick-actions {
+                gap: 6px;
+            }
+
+            .quick-btn {
+                padding: 6px 12px;
+                font-size: 11px;
+            }
+        }
+
+        /* Landscape mode on mobile */
+        @media (max-height: 500px) and (orientation: landscape) {
+            .chat-messages {
+                max-height: 150px;
+            }
+
+            .portfolio-summary {
+                display: none;
+            }
+
+            .insights-section {
+                display: none;
+            }
+        }
+
+        /* Touch-friendly improvements */
+        @media (hover: none) and (pointer: coarse) {
+            .stock-card,
+            .quick-btn,
+            .mic-button,
+            .send-button,
+            .icon-button,
+            .briefing-button {
+                min-height: 44px;
+                min-width: 44px;
+            }
+
+            .input-field {
+                font-size: 16px; /* Prevent zoom on iOS */
+            }
+
+            .stock-card:active {
+                transform: scale(0.98);
+            }
+
+            .quick-btn:active,
+            .mic-button:active,
+            .send-button:active,
+            .icon-button:active,
+            .briefing-button:active {
+                transform: scale(0.95);
+            }
+        }
+
+        /* Safe area insets for notched devices */
+        @supports (padding: max(0px)) {
+            body {
+                padding-top: max(0px, env(safe-area-inset-top));
+                padding-bottom: max(0px, env(safe-area-inset-bottom));
+                padding-left: max(0px, env(safe-area-inset-left));
+                padding-right: max(0px, env(safe-area-inset-right));
+            }
+
+            .install-banner.show {
+                bottom: max(20px, env(safe-area-inset-bottom));
+            }
+        }
+
     </style>
 </head>
 <body>
+    <!-- Pull-to-Refresh Indicator -->
+    <div class="pull-to-refresh" id="pull-indicator">
+        🔄
+    </div>
+
+    <!-- PWA Install Banner -->
+    <div class="install-banner" id="install-banner">
+        <div class="install-icon">📱</div>
+        <div class="install-text">
+            <h4>Install Sully AI</h4>
+            <p>Add to home screen for quick access</p>
+        </div>
+        <button class="install-button" id="install-btn">Install</button>
+        <button class="close-install" id="close-install">×</button>
+    </div>
+
     <div class="app-container">
-        <!-- Header -->
+        <!-- Modern Header -->
         <div class="header">
-            <div class="logo-section">
-                <div class="logo-circle">
-                    <div style="text-align: center;">
-                        <div class="logo-text">ROOF</div>
-                        <div class="logo-text">ER</div>
+            <div class="header-content">
+                <div class="header-left">
+                    <div class="logo-circle">📊</div>
+                    <div class="title-section">
+                        <h1>Sully AI</h1>
+                        <div class="subtitle">Executive Dashboard</div>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <div class="subtitle" id="last-update">Updated: Just now</div>
+                    <button class="icon-button" onclick="openHistory()" title="Conversation History">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                            <path d="M3 3v5h5"/>
+                            <path d="M12 7v5l4 2"/>
+                        </svg>
+                    </button>
+                    <button class="icon-button" onclick="openSettings()" title="Settings">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6m-14.36-.36l4.24 4.24m4.24-4.24l4.24 4.24"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Portfolio Summary Dashboard -->
+        <div class="portfolio-summary">
+            <div class="portfolio-value">
+                <div class="portfolio-label">Total Portfolio Value</div>
+                <div class="portfolio-amount" id="portfolio-total">Loading...</div>
+                <div class="portfolio-change positive" id="portfolio-change">
+                    <span>↑</span>
+                    <span>+$0 (0%)</span>
+                </div>
+            </div>
+            <div class="portfolio-stats">
+                <div class="stat-card">
+                    <div class="stat-label">Today's Gain</div>
+                    <div class="stat-value" id="today-gain">$0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Best Performer</div>
+                    <div class="stat-value" id="best-stock">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Stocks</div>
+                    <div class="stat-value" id="stock-count">8</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Market Status</div>
+                    <div class="stat-value" id="market-status">Open</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alerts Banner -->
+        <div class="alerts-banner" id="alerts-banner">
+            <!-- Alerts will be inserted here -->
+        </div>
+
+        <!-- AI Insights Section -->
+        <div class="insights-section">
+            <div class="insights-header">
+                <h2>🧠 AI Insights</h2>
+                <button class="briefing-button" onclick="generateBriefing()">
+                    <span>📋</span> Get Daily Briefing
+                </button>
+            </div>
+            <div class="insights-grid" id="insights-grid">
+                <div style="text-align: center; color: var(--text-secondary); padding: 20px;">
+                    Loading insights...
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="quick-actions">
+            <button class="action-pill" onclick="loadStockData()">
+                <span>🔄</span> Refresh Data
+            </button>
+            <button class="action-pill" onclick="loadInsights()">
+                <span>🧠</span> Refresh Insights
+            </button>
+            <button class="action-pill" onclick="sendQuick('How are the Celtics doing?')">
+                <span>🍀</span> Celtics
+            </button>
+            <button class="action-pill" onclick="sendQuick('What\\'s the latest Patriots news?')">
+                <span>🏈</span> Patriots
+            </button>
+        </div>
+
+        <!-- Stock Cards Grid -->
+        <div class="stocks-grid" id="stocks-grid">
+            <!-- Stock cards will be dynamically inserted here -->
+        </div>
+
+        <!-- Briefing Modal -->
+        <div class="briefing-modal" id="briefing-modal" onclick="closeBriefing(event)">
+            <div class="briefing-content" onclick="event.stopPropagation()">
+                <button class="briefing-close" onclick="closeBriefing()">×</button>
+                <div class="briefing-title" id="briefing-title">Daily Briefing</div>
+                <div class="briefing-subtitle" id="briefing-subtitle">Generated just now</div>
+                <div class="briefing-text" id="briefing-text">Loading...</div>
+            </div>
+        </div>
+
+        <!-- Chat Section -->
+        <div class="chat-section">
+            <div class="chat-header">
+                <span>💬</span>
+                <h2>Ask Sully</h2>
+            </div>
+            <div class="chat-area" id="messages">
+                <div class="message">
+                    <div class="avatar">🎩</div>
+                    <div class="message-content">
+                        <div class="message-name">Sully</div>
+                        <div class="message-bubble">Hey there! I'm Sully, your executive assistant. I've loaded your portfolio dashboard above. What would you like to know?</div>
                     </div>
                 </div>
             </div>
-            <div class="title-section">
-                <div class="main-title">
-                    <span class="boston-hat">🎩</span>
-                    Sully AI
-                    <span class="boston-hat">🏀</span>
+
+            <!-- Loading Indicator -->
+            <div class="loading" id="loading">🎩 Sully is thinking...</div>
+
+            <!-- Voice Status Indicator -->
+            <div class="voice-status" id="voice-status">🎤 Listening...</div>
+
+            <!-- Input Section -->
+            <div class="input-section">
+                <button class="mic-button" id="mic-btn" onclick="toggleVoice()" title="Click to talk">🎤</button>
+                <div class="input-wrapper">
+                    <input type="text" id="user-input" class="input-field" placeholder="Ask Sully anything or click 🎤 to talk..." onkeypress="handleKeyPress(event)" autocomplete="off">
                 </div>
-                <div class="subtitle">Your Wicked Smaht Boston Assistant</div>
-                <div class="powered-by">Powered by Roof ER - The Roof Docs</div>
+                <button class="send-button" id="send-btn" onclick="sendMessage()">➤</button>
             </div>
-            <div class="voice-button">
-                <button class="btn secondary" onclick="openVoiceModal()">Voice</button>
-            </div>
-        </div>
-
-        <!-- Category Pills - Row 1: Sports & Stocks -->
-        <div class="category-pills">
-            <button class="pill celtics" onclick="sendQuick('How are the Celtics doing? Any latest news?')">
-                <span class="pill-icon">🍀</span>
-                Celtics
-            </button>
-            <button class="pill patriots" onclick="sendQuick('What\\'s the latest Patriots news today?')">
-                <span class="pill-icon">🏈</span>
-                Patriots
-            </button>
-            <button class="pill stocks" onclick="sendQuick('How are my stocks looking?')">
-                <span class="pill-icon">📈</span>
-                Stocks
-            </button>
-            <button class="pill news" onclick="sendQuick('Any big news today?')">
-                <span class="pill-icon">📰</span>
-                News
-            </button>
-        </div>
-
-        <!-- VIP Pills - Row 2: Personalities -->
-        <div class="category-pills" style="padding-top: 10px;">
-            <button class="pill" style="background: linear-gradient(135deg, #002244 0%, #001a33 100%); border-color: #0044aa; color: white;" onclick="sendQuick('What\\'s the latest on Tom Brady?')">
-                <span class="pill-icon">🐐</span>
-                Brady
-            </button>
-            <button class="pill" style="background: linear-gradient(135deg, #000000 0%, #1a1a1a 100%); border-color: #333333; color: white;" onclick="sendQuick('What\\'s Elon up to? How\\'s TSLA?')">
-                <span class="pill-icon">🚀</span>
-                Elon
-            </button>
-            <button class="pill" style="background: linear-gradient(135deg, #c41e3a 0%, #8b1528 100%); border-color: #ff0000; color: white;" onclick="sendQuick('Any Trump news? How\\'s DJT stock?')">
-                <span class="pill-icon">🇺🇸</span>
-                Trump
-            </button>
-        </div>
-
-        <!-- Chat Area -->
-        <div class="chat-area" id="messages">
-            <div class="message">
-                <div class="avatar">🎩</div>
-                <div class="message-content">
-                    <div class="message-name">Sully</div>
-                    <div class="message-bubble">Hey there, boss! Sully heah, straight outta Southie! 🍀 Ready to talk Celtics, Pats, or check those stocks? I'm wicked smaht and here to help ya out. What's on your mind today?</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Loading Indicator -->
-        <div class="loading" id="loading">🎩 Sully's thinkin'...</div>
-
-        <!-- Voice Status Indicator -->
-        <div class="voice-status" id="voice-status">🎤 Listening...</div>
-
-        <!-- Input Section -->
-        <div class="input-section">
-            <button class="mic-button" id="mic-btn" onclick="toggleVoice()" title="Click to talk">🎤</button>
-            <div class="input-wrapper">
-                <input type="text" id="user-input" class="input-field" placeholder="Ask Sully anything or click 🎤 to talk..." onkeypress="handleKeyPress(event)" autocomplete="off">
-            </div>
-            <button class="send-button" id="send-btn" onclick="sendMessage()">➤</button>
-        </div>
-        <!-- Voice settings modal -->
-        <div class="modal-overlay" id="voice-modal">
-          <div class="modal">
-            <h3>Voice Settings</h3>
-            <div class="row">
-              <label style="width:120px">Available voices</label>
-              <select id="voice-select"></select>
-            </div>
-            <div class="row">
-              <label style="width:120px">Rate</label>
-              <input type="range" id="voice-rate" min="0.5" max="1.5" step="0.05" value="1.0" />
-            </div>
-            <div class="row">
-              <label style="width:120px">Pitch</label>
-              <input type="range" id="voice-pitch" min="0.5" max="1.5" step="0.05" value="1.0" />
-            </div>
-            <div class="actions">
-              <button class="btn secondary" onclick="closeVoiceModal()">Close</button>
-              <button class="btn" onclick="previewVoice()">Preview</button>
-              <button class="btn" onclick="saveVoiceSettings()">Save</button>
-            </div>
-          </div>
         </div>
     </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settings-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">⚙️ Settings</div>
+                <button class="close-button" onclick="closeSettings()">×</button>
+            </div>
+
+            <div class="setting-group">
+                <label class="setting-label">Boston Intensity</label>
+                <div class="setting-description">Control how much Boston personality Sully shows (1-10)</div>
+                <input type="range" class="setting-range" id="boston-intensity" min="1" max="10" value="2" oninput="document.getElementById('boston-value').textContent = this.value">
+                <div style="text-align: center; margin-top: 8px; color: var(--text-secondary);">
+                    <span id="boston-value">2</span> / 10
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <label class="setting-label">Voice Rate</label>
+                <div class="setting-description">How fast Sully speaks (0.5 = slow, 1.5 = fast)</div>
+                <input type="range" class="setting-range" id="voice-rate" min="0.5" max="1.5" step="0.05" value="0.95" oninput="document.getElementById('rate-value').textContent = this.value">
+                <div style="text-align: center; margin-top: 8px; color: var(--text-secondary);">
+                    <span id="rate-value">0.95</span>x
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <label class="setting-label">Voice Pitch</label>
+                <div class="setting-description">How deep Sully's voice is (0.5 = deep, 2.0 = high)</div>
+                <input type="range" class="setting-range" id="voice-pitch" min="0.5" max="2.0" step="0.05" value="0.85" oninput="document.getElementById('pitch-value').textContent = this.value">
+                <div style="text-align: center; margin-top: 8px; color: var(--text-secondary);">
+                    <span id="pitch-value">0.85</span>
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <label class="setting-label">Alert Threshold</label>
+                <div class="setting-description">Show alerts when stocks move more than this percentage</div>
+                <input type="range" class="setting-range" id="alert-threshold" min="1" max="10" step="0.5" value="5.0" oninput="document.getElementById('alert-value').textContent = this.value">
+                <div style="text-align: center; margin-top: 8px; color: var(--text-secondary);">
+                    <span id="alert-value">5.0</span>%
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <label class="setting-label">Voice Enabled</label>
+                <div class="setting-description">Enable text-to-speech responses</div>
+                <div class="setting-toggle active" id="voice-enabled" onclick="toggleSetting(this)"></div>
+            </div>
+
+            <div class="setting-group">
+                <label class="setting-label">Auto Refresh</label>
+                <div class="setting-description">Automatically refresh stock data</div>
+                <div class="setting-toggle active" id="auto-refresh" onclick="toggleSetting(this)"></div>
+            </div>
+
+            <button class="save-button" onclick="saveSettings()">💾 Save Settings</button>
+        </div>
+    </div>
+
+    <!-- History Modal -->
+    <div class="modal-overlay" id="history-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">🕐 Conversation History</div>
+                <button class="close-button" onclick="closeHistory()">×</button>
+            </div>
+            <div id="history-list">
+                <div style="text-align: center; padding: 40px; color: var(--text-secondary);">
+                    Loading history...
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Server TTS flag injected by Flask
         window.SERVER_TTS_ENABLED = {{ 'true' if server_tts else 'false' }};
+
+        // Dashboard Stock Data Management
+        let stockData = {};
+        let charts = {};
+
+        // Load stock data and populate dashboard
+        async function loadStockData() {
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({message: 'Get current stock data'})
+                });
+
+                if (!response.ok) {
+                    console.error('Failed to load stock data');
+                    return;
+                }
+
+                // For now, create demo data (will be replaced with real API data)
+                const stocks = ['TSLA', 'AAPL', 'NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'DJT'];
+                stockData = {};
+
+                stocks.forEach(symbol => {
+                    const basePrice = Math.random() * 500 + 100;
+                    const change = (Math.random() - 0.5) * 20;
+                    const changePercent = (change / basePrice) * 100;
+
+                    stockData[symbol] = {
+                        symbol: symbol,
+                        price: basePrice.toFixed(2),
+                        change: change.toFixed(2),
+                        change_percent: changePercent.toFixed(2),
+                        history: generateMockHistory()
+                    };
+                });
+
+                renderDashboard();
+                updateLastUpdate();
+            } catch (error) {
+                console.error('Error loading stock data:', error);
+            }
+        }
+
+        // Generate mock historical data for charts
+        function generateMockHistory() {
+            const points = [];
+            let baseValue = 100;
+            for (let i = 0; i < 30; i++) {
+                baseValue += (Math.random() - 0.48) * 5;
+                points.push(baseValue);
+            }
+            return points;
+        }
+
+        // Render the entire dashboard
+        function renderDashboard() {
+            renderPortfolioSummary();
+            renderStockCards();
+        }
+
+        // Calculate and render portfolio summary
+        function renderPortfolioSummary() {
+            let totalValue = 0;
+            let totalChange = 0;
+            let totalChangePercent = 0;
+            let bestStock = { symbol: '—', change: -Infinity };
+
+            Object.values(stockData).forEach(stock => {
+                const stockValue = parseFloat(stock.price) * 10; // Assume 10 shares each
+                const stockChange = parseFloat(stock.change) * 10;
+
+                totalValue += stockValue;
+                totalChange += stockChange;
+
+                if (parseFloat(stock.change) > bestStock.change) {
+                    bestStock = {
+                        symbol: stock.symbol,
+                        change: parseFloat(stock.change),
+                        percent: parseFloat(stock.change_percent)
+                    };
+                }
+            });
+
+            totalChangePercent = (totalChange / (totalValue - totalChange)) * 100;
+
+            // Update portfolio total
+            document.getElementById('portfolio-total').textContent =
+                `$${totalValue.toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",")}`;
+
+            // Update portfolio change
+            const changeEl = document.getElementById('portfolio-change');
+            const isPositive = totalChange >= 0;
+            changeEl.className = `portfolio-change ${isPositive ? 'positive' : 'negative'}`;
+            changeEl.innerHTML = `
+                <span>${isPositive ? '↑' : '↓'}</span>
+                <span>${isPositive ? '+' : ''}$${Math.abs(totalChange).toFixed(2)} (${isPositive ? '+' : ''}${totalChangePercent.toFixed(2)}%)</span>
+            `;
+
+            // Update stats
+            document.getElementById('today-gain').textContent =
+                `${totalChange >= 0 ? '+' : ''}$${totalChange.toFixed(2)}`;
+            document.getElementById('today-gain').style.color =
+                totalChange >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+
+            document.getElementById('best-stock').textContent =
+                `${bestStock.symbol} ${bestStock.percent > 0 ? '+' : ''}${bestStock.percent.toFixed(1)}%`;
+            document.getElementById('best-stock').style.color = 'var(--accent-green)';
+
+            document.getElementById('stock-count').textContent = Object.keys(stockData).length;
+        }
+
+        // Render individual stock cards with charts
+        function renderStockCards() {
+            const grid = document.getElementById('stocks-grid');
+            grid.innerHTML = '';
+
+            Object.values(stockData).forEach(stock => {
+                const card = createStockCard(stock);
+                grid.appendChild(card);
+            });
+        }
+
+        // Create a single stock card
+        function createStockCard(stock) {
+            const isPositive = parseFloat(stock.change) >= 0;
+            const card = document.createElement('div');
+            card.className = 'stock-card';
+            card.innerHTML = `
+                <div class="stock-header">
+                    <div>
+                        <div class="stock-symbol">${stock.symbol}</div>
+                        <div class="stock-price">$${stock.price}</div>
+                    </div>
+                    <div class="stock-change ${isPositive ? 'positive' : 'negative'}">
+                        <span>${isPositive ? '↑' : '↓'}</span>
+                        <span>${isPositive ? '+' : ''}${stock.change} (${isPositive ? '+' : ''}${stock.change_percent}%)</span>
+                    </div>
+                </div>
+                <div class="stock-chart">
+                    <canvas id="chart-${stock.symbol}"></canvas>
+                </div>
+            `;
+
+            // Add chart after card is added to DOM
+            setTimeout(() => {
+                createStockChart(stock);
+            }, 100);
+
+            return card;
+        }
+
+        // Create Chart.js chart for stock
+        function createStockChart(stock) {
+            const canvas = document.getElementById(`chart-${stock.symbol}`);
+            if (!canvas) return;
+
+            const ctx = canvas.getContext('2d');
+            const isPositive = parseFloat(stock.change) >= 0;
+
+            if (charts[stock.symbol]) {
+                charts[stock.symbol].destroy();
+            }
+
+            charts[stock.symbol] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: stock.history.map((_, i) => ''),
+                    datasets: [{
+                        data: stock.history,
+                        borderColor: isPositive ? '#10b981' : '#ef4444',
+                        backgroundColor: isPositive ?
+                            'rgba(16, 185, 129, 0.1)' :
+                            'rgba(239, 68, 68, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        pointHoverRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            enabled: true,
+                            mode: 'index',
+                            intersect: false
+                        }
+                    },
+                    scales: {
+                        x: { display: false },
+                        y: { display: false }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    }
+                }
+            });
+        }
+
+        // Update last update time
+        function updateLastUpdate() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit'
+            });
+            document.getElementById('last-update').textContent = `Updated: ${timeStr}`;
+        }
+
+        // Load insights and alerts
+        async function loadInsights() {
+            try {
+                const response = await fetch('/api/insights');
+                const data = await response.json();
+
+                if (data.insights) {
+                    renderInsights(data.insights);
+                }
+
+                if (data.alerts && data.alerts.length > 0) {
+                    renderAlerts(data.alerts);
+                }
+            } catch (error) {
+                console.error('Error loading insights:', error);
+            }
+        }
+
+        // Render insights cards
+        function renderInsights(insights) {
+            const grid = document.getElementById('insights-grid');
+
+            if (!insights || insights.length === 0) {
+                grid.innerHTML = `
+                    <div style="text-align: center; color: var(--text-secondary); padding: 20px;">
+                        No insights available at this time. Check back soon!
+                    </div>
+                `;
+                return;
+            }
+
+            grid.innerHTML = '';
+
+            insights.forEach(insight => {
+                const card = document.createElement('div');
+                card.className = `insight-card ${insight.severity}`;
+                card.innerHTML = `
+                    <div class="insight-header">
+                        <span class="insight-symbol">${insight.symbol}</span>
+                        <span class="insight-type">${insight.type.replace('_', ' ')}</span>
+                    </div>
+                    <div class="insight-message">${insight.message}</div>
+                    <div class="insight-action">→ ${insight.action}</div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        // Render alerts banner
+        function renderAlerts(alerts) {
+            const banner = document.getElementById('alerts-banner');
+
+            if (!alerts || alerts.length === 0) {
+                banner.classList.remove('active');
+                return;
+            }
+
+            banner.innerHTML = '';
+            alerts.forEach(alert => {
+                const alertItem = document.createElement('div');
+                alertItem.className = 'alert-item';
+                alertItem.innerHTML = `
+                    <div class="alert-icon">${alert.severity === 'urgent' ? '🚨' : '⚠️'}</div>
+                    <div class="alert-content">
+                        <div class="alert-message">${alert.message}</div>
+                        <div class="alert-severity">${alert.severity.toUpperCase()} · ${new Date(alert.timestamp).toLocaleTimeString()}</div>
+                    </div>
+                `;
+                banner.appendChild(alertItem);
+            });
+
+            banner.classList.add('active');
+        }
+
+        // Generate and show daily briefing
+        async function generateBriefing() {
+            const modal = document.getElementById('briefing-modal');
+            const briefingText = document.getElementById('briefing-text');
+            const briefingTitle = document.getElementById('briefing-title');
+            const briefingSubtitle = document.getElementById('briefing-subtitle');
+
+            // Determine time of day
+            const hour = new Date().getHours();
+            let timeOfDay = 'morning';
+            let title = '☀️ Morning Briefing';
+
+            if (hour >= 12 && hour < 17) {
+                timeOfDay = 'afternoon';
+                title = '🌤️ Afternoon Update';
+            } else if (hour >= 17) {
+                timeOfDay = 'evening';
+                title = '🌙 Evening Briefing';
+            }
+
+            briefingTitle.textContent = title;
+            briefingSubtitle.textContent = 'Generating your personalized briefing...';
+            briefingText.textContent = 'Please wait while Sully analyzes your portfolio and generates insights...';
+
+            modal.classList.add('active');
+
+            try {
+                const response = await fetch('/api/briefing', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ time: timeOfDay })
+                });
+
+                const data = await response.json();
+
+                if (data.briefing) {
+                    briefingText.textContent = data.briefing;
+                    briefingSubtitle.textContent = `Generated at ${new Date(data.generated_at).toLocaleTimeString()}`;
+
+                    // Speak the briefing
+                    speak(data.briefing);
+
+                    // Update insights and alerts if provided
+                    if (data.insights) {
+                        renderInsights(data.insights);
+                    }
+                    if (data.alerts) {
+                        renderAlerts(data.alerts);
+                    }
+                } else {
+                    briefingText.textContent = 'Unable to generate briefing at this time. Please try again later.';
+                }
+            } catch (error) {
+                console.error('Error generating briefing:', error);
+                briefingText.textContent = 'Error generating briefing. Please check your API configuration and try again.';
+            }
+        }
+
+        // Close briefing modal
+        function closeBriefing(event) {
+            if (!event || event.target.id === 'briefing-modal' || event.target.className.includes('briefing-close')) {
+                document.getElementById('briefing-modal').classList.remove('active');
+            }
+        }
+
+        // Load data on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadStockData();
+            loadInsights();
+
+            // Refresh every 5 minutes
+            setInterval(loadStockData, 300000);
+            setInterval(loadInsights, 300000);
+        });
+
         // Speech Recognition Setup
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         let recognition = null;
@@ -969,80 +2576,42 @@ HTML = """
             };
         }
 
-        // Voice selection helpers
-        const PREFERRED_VOICES = ['Alex','Fred','Microsoft Mark','Microsoft David','Microsoft Guy','Google US English','Google en-US','Siri Male','Siri Voice 2 (en-US)','Siri Voice 3 (en-US)'];
+        // Voice selection - automatically pick best natural-sounding male voice
+        // Prioritize voices that sound more like Elon Musk or Trump (deeper, more natural)
+        const PREFERRED_VOICES = [
+            'Alex',              // macOS - natural male voice
+            'Fred',              // macOS - deeper male voice
+            'Daniel',            // Natural British male
+            'Microsoft David',   // Windows - natural
+            'Microsoft Mark',    // Windows - US male
+            'Google US English Male', // Chrome - natural
+            'Google UK English Male'  // Chrome - deeper
+        ];
 
-        async function ensureVoices(timeoutMs = 1500) {
-            if (!('speechSynthesis' in window)) return [];
-            const synth = window.speechSynthesis;
-            let voices = synth.getVoices();
-            if (voices && voices.length) return voices;
-            voices = await new Promise((resolve) => {
-                const t = setTimeout(() => resolve(synth.getVoices()), timeoutMs);
-                const handler = () => { clearTimeout(t); synth.removeEventListener('voiceschanged', handler); resolve(synth.getVoices()); };
-                synth.addEventListener('voiceschanged', handler);
-            });
-            return voices;
-        }
+        function getBestMaleUsVoice() {
+            if (!('speechSynthesis' in window)) return null;
+            const voices = window.speechSynthesis.getVoices();
+            if (!voices || !voices.length) return null;
 
-        function selectBestMaleUsVoice(voices, preferred = PREFERRED_VOICES, lang = 'en-US') {
-            if (!voices || !voices.length) return undefined;
-            const norm = s => s.toLowerCase();
-            const byName = new Map(voices.map(v => [norm(v.name), v]));
-            for (const n of preferred) { const v = byName.get(norm(n)); if (v) return v; }
-            const maleish = n => /(male|alex|fred|mark|david|guy|mike|john)/i.test(n);
-            const us = voices.filter(v => (v.lang||'').toLowerCase().startsWith(lang.toLowerCase()));
-            const m = us.find(v => maleish(v.name)); if (m) return m;
-            if (us.length) return us[0];
-            const en = voices.filter(v => (v.lang||'').toLowerCase().startsWith('en')); if (en.length) return en[0];
-            return voices[0];
-        }
+            // Try preferred voices first (best quality)
+            for (const preferredName of PREFERRED_VOICES) {
+                const voice = voices.find(v =>
+                    v.name === preferredName ||
+                    v.name.includes(preferredName)
+                );
+                if (voice) return voice;
+            }
 
-        function getSavedVoiceName() { try { return localStorage.getItem('sully_voice_name') || ''; } catch { return ''; } }
-        function getSavedRate() { try { return parseFloat(localStorage.getItem('sully_voice_rate') || '1.0'); } catch { return 1.0; } }
-        function getSavedPitch() { try { return parseFloat(localStorage.getItem('sully_voice_pitch') || '1.0'); } catch { return 1.0; } }
+            // Fallback: Find any deeper, natural-sounding male voice
+            const deepMaleVoice = voices.find(v =>
+                v.lang.startsWith('en') &&
+                /(male|alex|daniel|fred|mark|david|guy|james|aaron)/i.test(v.name) &&
+                !/(female|samantha|victoria|karen|susan|junior|compact)/i.test(v.name)
+            );
+            if (deepMaleVoice) return deepMaleVoice;
 
-        async function openVoiceModal() {
-            const overlay = document.getElementById('voice-modal');
-            overlay.style.display = 'flex';
-            const select = document.getElementById('voice-select');
-            select.innerHTML = '';
-            const voices = await ensureVoices();
-            const saved = getSavedVoiceName();
-            voices.forEach(v => {
-                const opt = document.createElement('option');
-                opt.value = v.name;
-                opt.textContent = `${v.name} (${v.lang || ''})`;
-                if (saved && v.name === saved) opt.selected = true;
-                select.appendChild(opt);
-            });
-            document.getElementById('voice-rate').value = String(getSavedRate());
-            document.getElementById('voice-pitch').value = String(getSavedPitch());
-        }
-        function closeVoiceModal() { document.getElementById('voice-modal').style.display = 'none'; }
-        async function previewVoice() {
-            const text = 'This is Sully. How do I sound?';
-            const voices = await ensureVoices();
-            const name = document.getElementById('voice-select').value;
-            const rate = parseFloat(document.getElementById('voice-rate').value);
-            const pitch = parseFloat(document.getElementById('voice-pitch').value);
-            const u = new SpeechSynthesisUtterance(text);
-            u.rate = rate; u.pitch = pitch; u.volume = 1.0; u.lang = 'en-US';
-            const v = voices.find(x => x.name === name) || selectBestMaleUsVoice(voices);
-            if (v) u.voice = v;
-            try { window.speechSynthesis.cancel(); } catch {}
-            window.speechSynthesis.speak(u);
-        }
-        function saveVoiceSettings() {
-            const name = document.getElementById('voice-select').value;
-            const rate = document.getElementById('voice-rate').value;
-            const pitch = document.getElementById('voice-pitch').value;
-            try {
-                localStorage.setItem('sully_voice_name', name);
-                localStorage.setItem('sully_voice_rate', rate);
-                localStorage.setItem('sully_voice_pitch', pitch);
-            } catch {}
-            closeVoiceModal();
+            // Last resort: any English voice
+            return voices.find(v => v.lang.startsWith('en')) || voices[0];
         }
 
         // Clean text for natural speech (remove emojis, symbols, etc.)
@@ -1091,17 +2660,13 @@ HTML = """
                 .trim();
         }
 
-        // Speech Synthesis with Custom Boston Voice
-        let currentAudio = null;
-
-        // [Removed] Boston transform (kept minimal and off by default)
-
-        async function speak(text) {
+        // Speech Synthesis with natural male voice (optimized for natural sound)
+        function speak(text) {
             // Clean text for natural speech
             const cleanText = cleanTextForSpeech(text);
             if (!cleanText) return;
 
-            // Prefer server TTS if enabled for natural voice (paid). If not set, use browser voices only.
+            // Prefer server TTS if enabled (ElevenLabs)
             if (window.SERVER_TTS_ENABLED) {
                 try {
                     const audio = new Audio('/tts?text=' + encodeURIComponent(cleanText));
@@ -1112,29 +2677,24 @@ HTML = """
                 }
             }
 
+            // Use browser's speech synthesis with optimized settings for natural sound
             if ('speechSynthesis' in window) {
-                // Stop any current speech
                 window.speechSynthesis.cancel();
 
-                // Regular male US English voice (no accent)
                 const utterance = new SpeechSynthesisUtterance(cleanText);
 
-                // Natural male voice settings
-                // Use saved rate/pitch if any
-                const savedRate = getSavedRate();
-                const savedPitch = getSavedPitch();
-                utterance.rate = savedRate || 1.0;      // Normal speed
-                utterance.pitch = savedPitch || 1.0;     // Neutral male
-                utterance.volume = 1.0;
+                // Optimized settings for natural, confident male voice
+                // Slightly slower = more natural and authoritative
+                utterance.rate = 0.95;      // Slightly slower than default (more natural)
+                utterance.pitch = 0.85;     // Deeper pitch (more masculine, like Elon/Trump)
+                utterance.volume = 1.0;     // Full volume
                 utterance.lang = 'en-US';
 
-                // Get all available voices (ensure loaded) and apply saved preference if present
-                const voices = await ensureVoices();
-                const savedName = getSavedVoiceName();
-                let selected = (savedName && voices.find(v => v.name === savedName)) || selectBestMaleUsVoice(voices);
-                if (selected) {
-                    utterance.voice = selected;
-                    console.log('Selected voice:', selected.name, selected.lang);
+                // Automatically select best natural male voice
+                const voice = getBestMaleUsVoice();
+                if (voice) {
+                    utterance.voice = voice;
+                    console.log('Using voice:', voice.name, '| Rate:', utterance.rate, '| Pitch:', utterance.pitch);
                 }
 
                 window.speechSynthesis.speak(utterance);
@@ -1218,13 +2778,13 @@ HTML = """
                     // Speak Sully's response
                     speak(data.response);
                 } else {
-                    const errorMsg = 'Ah jeez, hit a snag there. Try again, kid.';
+                    const errorMsg = 'Sorry, I hit a snag there. Please try again.';
                     addMessage(errorMsg, 'sully');
                     speak(errorMsg);
                 }
             } catch (error) {
                 setLoading(false);
-                const errorMsg = 'Down the cah-pah with the connection. Try again, boss.';
+                const errorMsg = 'Connection issue. Please try again.';
                 addMessage(errorMsg, 'sully');
                 speak(errorMsg);
             }
@@ -1242,6 +2802,337 @@ HTML = """
             }
         }
 
+        // ===== SETTINGS FUNCTIONS =====
+        let userPreferences = {};
+
+        async function loadUserPreferences() {
+            try {
+                const response = await fetch('/api/preferences');
+                const prefs = await response.json();
+                userPreferences = prefs;
+
+                // Update UI with loaded preferences
+                if (prefs.id) {
+                    document.getElementById('boston-intensity').value = prefs.boston_intensity || 2;
+                    document.getElementById('boston-value').textContent = prefs.boston_intensity || 2;
+                    document.getElementById('voice-rate').value = prefs.voice_rate || 0.95;
+                    document.getElementById('rate-value').textContent = prefs.voice_rate || 0.95;
+                    document.getElementById('voice-pitch').value = prefs.voice_pitch || 0.85;
+                    document.getElementById('pitch-value').textContent = prefs.voice_pitch || 0.85;
+                    document.getElementById('alert-threshold').value = prefs.alert_threshold || 5.0;
+                    document.getElementById('alert-value').textContent = prefs.alert_threshold || 5.0;
+
+                    if (prefs.voice_enabled) {
+                        document.getElementById('voice-enabled').classList.add('active');
+                    } else {
+                        document.getElementById('voice-enabled').classList.remove('active');
+                    }
+
+                    if (prefs.auto_refresh) {
+                        document.getElementById('auto-refresh').classList.add('active');
+                    } else {
+                        document.getElementById('auto-refresh').classList.remove('active');
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load preferences:', error);
+            }
+        }
+
+        function openSettings() {
+            document.getElementById('settings-modal').classList.add('active');
+            loadUserPreferences();
+        }
+
+        function closeSettings() {
+            document.getElementById('settings-modal').classList.remove('active');
+        }
+
+        function toggleSetting(element) {
+            element.classList.toggle('active');
+        }
+
+        async function saveSettings() {
+            const settings = {
+                boston_intensity: parseInt(document.getElementById('boston-intensity').value),
+                voice_rate: parseFloat(document.getElementById('voice-rate').value),
+                voice_pitch: parseFloat(document.getElementById('voice-pitch').value),
+                alert_threshold: parseFloat(document.getElementById('alert-threshold').value),
+                voice_enabled: document.getElementById('voice-enabled').classList.contains('active'),
+                auto_refresh: document.getElementById('auto-refresh').classList.contains('active')
+            };
+
+            try {
+                const response = await fetch('/api/preferences', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(settings)
+                });
+
+                if (response.ok) {
+                    userPreferences = {...userPreferences, ...settings};
+                    alert('✅ Settings saved successfully!');
+                    closeSettings();
+
+                    // Apply voice settings immediately
+                    window.voiceRate = settings.voice_rate;
+                    window.voicePitch = settings.voice_pitch;
+                } else {
+                    alert('❌ Failed to save settings');
+                }
+            } catch (error) {
+                console.error('Error saving settings:', error);
+                alert('❌ Failed to save settings');
+            }
+        }
+
+        // ===== HISTORY FUNCTIONS =====
+        async function openHistory() {
+            document.getElementById('history-modal').classList.add('active');
+            await loadHistory();
+        }
+
+        function closeHistory() {
+            document.getElementById('history-modal').classList.remove('active');
+        }
+
+        async function loadHistory() {
+            try {
+                const response = await fetch('/api/history?limit=20');
+                const data = await response.json();
+                const historyList = document.getElementById('history-list');
+
+                if (data.history && data.history.length > 0) {
+                    historyList.innerHTML = data.history.map(item => `
+                        <div class="history-item">
+                            <div class="history-timestamp">${new Date(item.timestamp).toLocaleString()}</div>
+                            <div class="history-message"><strong>You:</strong> ${item.message}</div>
+                            <div class="history-response"><strong>Sully:</strong> ${item.response}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    historyList.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: var(--text-secondary);">
+                            No conversation history yet. Start chatting with Sully!
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading history:', error);
+                document.getElementById('history-list').innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: var(--accent-red);">
+                        Failed to load history
+                    </div>
+                `;
+            }
+        }
+
+        // Close modals when clicking outside
+        document.addEventListener('click', function(event) {
+            if (event.target.classList.contains('modal-overlay')) {
+                event.target.classList.remove('active');
+            }
+        });
+
+        // Initialize preferences on page load
+        loadUserPreferences();
+
+        // ===== PWA SERVICE WORKER =====
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then(registration => {
+                        console.log('ServiceWorker registered:', registration.scope);
+
+                        // Check for updates periodically
+                        setInterval(() => {
+                            registration.update();
+                        }, 60000); // Check every minute
+                    })
+                    .catch(error => {
+                        console.log('ServiceWorker registration failed:', error);
+                    });
+            });
+        }
+
+        // ===== PWA INSTALLATION PROMPT =====
+        let deferredPrompt;
+        const installBanner = document.getElementById('install-banner');
+        const installBtn = document.getElementById('install-btn');
+        const closeInstallBtn = document.getElementById('close-install');
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            // Prevent Chrome 76+ from automatically showing prompt
+            e.preventDefault();
+            deferredPrompt = e;
+
+            // Show install banner after 3 seconds
+            setTimeout(() => {
+                const isInstalled = window.matchMedia('(display-mode: standalone)').matches;
+                if (!isInstalled && !localStorage.getItem('install-dismissed')) {
+                    installBanner.classList.add('show');
+                }
+            }, 3000);
+        });
+
+        installBtn.addEventListener('click', async () => {
+            if (!deferredPrompt) return;
+
+            // Show the install prompt
+            deferredPrompt.prompt();
+
+            // Wait for the user's response
+            const { outcome } = await deferredPrompt.userChoice;
+            console.log(`User response: ${outcome}`);
+
+            // Clear the deferredPrompt
+            deferredPrompt = null;
+            installBanner.classList.remove('show');
+        });
+
+        closeInstallBtn.addEventListener('click', () => {
+            installBanner.classList.remove('show');
+            localStorage.setItem('install-dismissed', 'true');
+        });
+
+        // Detect if app is running as PWA
+        window.addEventListener('appinstalled', () => {
+            console.log('PWA installed successfully');
+            installBanner.classList.remove('show');
+        });
+
+        // ===== PULL-TO-REFRESH =====
+        let startY = 0;
+        let currentY = 0;
+        let pulling = false;
+        const pullIndicator = document.getElementById('pull-indicator');
+        const PULL_THRESHOLD = 80;
+
+        document.addEventListener('touchstart', (e) => {
+            if (window.scrollY === 0) {
+                startY = e.touches[0].clientY;
+                pulling = true;
+            }
+        }, { passive: true });
+
+        document.addEventListener('touchmove', (e) => {
+            if (!pulling) return;
+
+            currentY = e.touches[0].clientY;
+            const pullDistance = currentY - startY;
+
+            if (pullDistance > 0 && pullDistance < PULL_THRESHOLD * 2) {
+                pullIndicator.style.top = `${Math.min(pullDistance / 2, PULL_THRESHOLD)}px`;
+
+                if (pullDistance > PULL_THRESHOLD) {
+                    pullIndicator.classList.add('active');
+                } else {
+                    pullIndicator.classList.remove('active');
+                }
+            }
+        }, { passive: true });
+
+        document.addEventListener('touchend', async () => {
+            if (!pulling) return;
+
+            const pullDistance = currentY - startY;
+
+            if (pullDistance > PULL_THRESHOLD) {
+                // Trigger refresh
+                pullIndicator.classList.add('refreshing');
+
+                try {
+                    // Reload stock data
+                    await loadStockData();
+                    await loadInsights();
+
+                    // Success feedback
+                    setTimeout(() => {
+                        pullIndicator.classList.remove('active', 'refreshing');
+                        pullIndicator.style.top = '-60px';
+                    }, 500);
+                } catch (error) {
+                    console.error('Refresh failed:', error);
+                    pullIndicator.classList.remove('active', 'refreshing');
+                    pullIndicator.style.top = '-60px';
+                }
+            } else {
+                pullIndicator.classList.remove('active');
+                pullIndicator.style.top = '-60px';
+            }
+
+            pulling = false;
+            startY = 0;
+            currentY = 0;
+        });
+
+        // ===== PUSH NOTIFICATIONS =====
+        async function requestNotificationPermission() {
+            if ('Notification' in window && 'serviceWorker' in navigator) {
+                const permission = await Notification.requestPermission();
+
+                if (permission === 'granted') {
+                    console.log('Notification permission granted');
+
+                    // Subscribe to push notifications
+                    const registration = await navigator.serviceWorker.ready;
+                    const subscription = await registration.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: null // Add your VAPID public key here if needed
+                    });
+
+                    console.log('Push subscription:', subscription);
+                    // Send subscription to server if needed
+                }
+            }
+        }
+
+        // Request notification permission after 10 seconds (if not already granted)
+        setTimeout(() => {
+            if ('Notification' in window && Notification.permission === 'default') {
+                requestNotificationPermission();
+            }
+        }, 10000);
+
+        // ===== OFFLINE DETECTION =====
+        window.addEventListener('online', () => {
+            console.log('Back online');
+            // Optionally show a toast notification
+        });
+
+        window.addEventListener('offline', () => {
+            console.log('Gone offline');
+            // Optionally show a toast notification
+        });
+
+        // ===== TOUCH GESTURES FOR MOBILE =====
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        document.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+        }, { passive: true });
+
+        document.addEventListener('touchend', (e) => {
+            const touchEndX = e.changedTouches[0].clientX;
+            const touchEndY = e.changedTouches[0].clientY;
+
+            const deltaX = touchEndX - touchStartX;
+            const deltaY = touchEndY - touchStartY;
+
+            // Swipe gestures (optional - can be extended)
+            if (Math.abs(deltaX) > 100 && Math.abs(deltaY) < 50) {
+                if (deltaX > 0) {
+                    console.log('Swipe right');
+                    // Add swipe right action if needed
+                } else {
+                    console.log('Swipe left');
+                    // Add swipe left action if needed
+                }
+            }
+        }, { passive: true });
+
         document.getElementById('user-input').focus();
     </script>
 </body>
@@ -1253,7 +3144,18 @@ def index():
     server_tts = bool(ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID)
     return render_template_string(HTML, server_tts=server_tts)
 
+@app.route('/manifest.json')
+def manifest():
+    """Serve PWA manifest"""
+    return send_file('manifest.json', mimetype='application/json')
+
+@app.route('/service-worker.js')
+def service_worker():
+    """Serve service worker"""
+    return send_file('service-worker.js', mimetype='application/javascript')
+
 @app.route('/chat', methods=['POST'])
+@login_required
 def chat():
     global current_data, last_update, aggregator, sully
 
@@ -1262,7 +3164,7 @@ def chat():
         aggregator = NewsAggregator()
     if sully is None:
         if not GROQ_API_KEY:
-            return jsonify({'response': 'Ah jeez, the API key ain\'t set up yet, kid. Tell the dev team!', 'error': True})
+            return jsonify({'response': 'API key not configured yet. Please contact support.', 'error': True})
         sully = SullyAI(GROQ_API_KEY, BOSTON_INTENSITY)
 
     try:
@@ -1338,10 +3240,24 @@ def chat():
         else:
             response = sully.chat(user_message, current_data)
 
+        # Save conversation to history
+        try:
+            db = get_db()
+            cursor = db.cursor()
+            cursor.execute('''
+                INSERT INTO conversations (user_id, message, response)
+                VALUES (?, ?, ?)
+            ''', (session['user_id'], user_message, response))
+            db.commit()
+            db.close()
+        except Exception as history_error:
+            # Don't fail the response if history save fails
+            print(f"Failed to save conversation history: {history_error}")
+
         return jsonify({'response': response})
 
     except Exception as e:
-        return jsonify({'response': f"Ah jeez, hit a snag: {str(e)}", 'error': True})
+        return jsonify({'response': f"Sorry, encountered an error: {str(e)}", 'error': True})
 
 @app.route('/tts')
 def tts():
@@ -1394,6 +3310,397 @@ def tts():
             yield b''
 
     return Response(stream_with_context(generate()), mimetype='audio/mpeg')
+
+@app.route('/api/briefing', methods=['POST'])
+def get_briefing():
+    """Generate AI-powered daily briefing"""
+    global current_data, aggregator, sully
+
+    if aggregator is None:
+        aggregator = NewsAggregator()
+    if sully is None:
+        if not GROQ_API_KEY:
+            return jsonify({'error': 'API key not configured'}), 400
+        sully = SullyAI(GROQ_API_KEY, BOSTON_INTENSITY)
+
+    try:
+        data = request.get_json()
+        time_of_day = data.get('time', 'morning')  # morning, afternoon, evening
+
+        # Get fresh market data
+        if not current_data or not last_update or (datetime.now() - last_update).seconds > 1800:
+            current_data = aggregator.get_full_briefing(STOCK_SYMBOLS)
+
+        # Analyze portfolio performance
+        portfolio_analysis = analyze_portfolio_performance(current_data['stocks'])
+
+        # Create briefing prompt based on time of day
+        if time_of_day == 'morning':
+            briefing_prompt = f"""Generate a concise morning briefing for a busy executive. Include:
+
+PORTFOLIO PERFORMANCE:
+{portfolio_analysis}
+
+1. Portfolio Status: Quick summary of overall performance
+2. Top 3 Insights: Most important things to know today
+3. Key Movers: Stocks with significant changes (>3%)
+4. Action Items: What to watch today
+
+Keep it under 200 words. Be direct and actionable. Use bullet points."""
+
+        else:
+            briefing_prompt = f"""Generate an end-of-day briefing for a busy executive. Include:
+
+PORTFOLIO PERFORMANCE:
+{portfolio_analysis}
+
+1. Daily Performance: How did the portfolio perform today?
+2. Key Winners & Losers: Top 3 of each
+3. Notable Events: Any significant market moves or news
+4. Tomorrow's Watch List: What to monitor
+
+Keep it under 200 words. Be direct and insightful."""
+
+        # Generate briefing using AI
+        briefing = sully.chat(briefing_prompt, current_data)
+
+        # Extract insights
+        insights = extract_insights(current_data['stocks'])
+        alerts = detect_alerts(current_data['stocks'])
+
+        return jsonify({
+            'briefing': briefing,
+            'insights': insights,
+            'alerts': alerts,
+            'time': time_of_day,
+            'generated_at': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/insights', methods=['GET'])
+def get_insights():
+    """Get AI-powered portfolio insights"""
+    global current_data, aggregator
+
+    if aggregator is None:
+        aggregator = NewsAggregator()
+
+    try:
+        # Get fresh data
+        if not current_data or not last_update or (datetime.now() - last_update).seconds > 1800:
+            current_data = aggregator.get_full_briefing(STOCK_SYMBOLS)
+
+        insights = extract_insights(current_data['stocks'])
+        alerts = detect_alerts(current_data['stocks'])
+
+        return jsonify({
+            'insights': insights,
+            'alerts': alerts,
+            'timestamp': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ===== USER PREFERENCES API =====
+@app.route('/api/preferences', methods=['GET'])
+@login_required
+def get_preferences():
+    """Get user preferences"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT * FROM preferences WHERE user_id = ?', (session['user_id'],))
+        prefs = cursor.fetchone()
+        db.close()
+
+        if prefs:
+            return jsonify(dict(prefs))
+        else:
+            return jsonify({'error': 'Preferences not found'}), 404
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/preferences', methods=['POST'])
+@login_required
+def update_preferences():
+    """Update user preferences"""
+    try:
+        data = request.get_json()
+        db = get_db()
+        cursor = db.cursor()
+
+        # Update preferences
+        updates = []
+        values = []
+        for key in ['theme', 'boston_intensity', 'voice_enabled', 'voice_rate',
+                   'voice_pitch', 'alert_threshold', 'auto_refresh', 'refresh_interval']:
+            if key in data:
+                updates.append(f"{key} = ?")
+                values.append(data[key])
+
+        if updates:
+            values.append(session['user_id'])
+            query = f"UPDATE preferences SET {', '.join(updates)} WHERE user_id = ?"
+            cursor.execute(query, values)
+            db.commit()
+
+        db.close()
+        return jsonify({'success': True, 'message': 'Preferences updated'})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ===== WATCHLIST API =====
+@app.route('/api/watchlist', methods=['GET'])
+@login_required
+def get_watchlist():
+    """Get user's custom watchlist"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('''
+            SELECT symbol, added_at, notes
+            FROM watchlists
+            WHERE user_id = ?
+            ORDER BY added_at DESC
+        ''', (session['user_id'],))
+        watchlist = [dict(row) for row in cursor.fetchall()]
+        db.close()
+
+        return jsonify({'watchlist': watchlist})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/watchlist', methods=['POST'])
+@login_required
+def add_to_watchlist():
+    """Add stock to watchlist"""
+    try:
+        data = request.get_json()
+        symbol = data.get('symbol', '').upper()
+        notes = data.get('notes', '')
+
+        if not symbol:
+            return jsonify({'error': 'Symbol required'}), 400
+
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO watchlists (user_id, symbol, notes)
+            VALUES (?, ?, ?)
+        ''', (session['user_id'], symbol, notes))
+        db.commit()
+        db.close()
+
+        return jsonify({'success': True, 'message': f'{symbol} added to watchlist'})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/watchlist/<symbol>', methods=['DELETE'])
+@login_required
+def remove_from_watchlist(symbol):
+    """Remove stock from watchlist"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('''
+            DELETE FROM watchlists
+            WHERE user_id = ? AND symbol = ?
+        ''', (session['user_id'], symbol.upper()))
+        db.commit()
+        db.close()
+
+        return jsonify({'success': True, 'message': f'{symbol} removed from watchlist'})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ===== CONVERSATION HISTORY API =====
+@app.route('/api/history', methods=['GET'])
+@login_required
+def get_history():
+    """Get conversation history"""
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('''
+            SELECT message, response, timestamp
+            FROM conversations
+            WHERE user_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (session['user_id'], limit))
+        history = [dict(row) for row in cursor.fetchall()]
+        db.close()
+
+        return jsonify({'history': history})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/history', methods=['POST'])
+@login_required
+def save_conversation():
+    """Save conversation to history"""
+    try:
+        data = request.get_json()
+        message = data.get('message')
+        response = data.get('response')
+
+        if not message or not response:
+            return jsonify({'error': 'Message and response required'}), 400
+
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('''
+            INSERT INTO conversations (user_id, message, response)
+            VALUES (?, ?, ?)
+        ''', (session['user_id'], message, response))
+        db.commit()
+        db.close()
+
+        return jsonify({'success': True})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def analyze_portfolio_performance(stocks):
+    """Analyze portfolio performance and return formatted summary"""
+    total_value = 0
+    total_change = 0
+    gainers = []
+    losers = []
+
+    for symbol, data in stocks.items():
+        if 'error' in data:
+            continue
+
+        price = data.get('price', 0)
+        change = data.get('change', 0)
+        change_pct = data.get('change_percent', 0)
+
+        # Assume 10 shares of each
+        position_value = price * 10
+        position_change = change * 10
+
+        total_value += position_value
+        total_change += position_change
+
+        if change > 0:
+            gainers.append({'symbol': symbol, 'change': change, 'change_pct': change_pct})
+        elif change < 0:
+            losers.append({'symbol': symbol, 'change': change, 'change_pct': change_pct})
+
+    # Sort by change percentage
+    gainers.sort(key=lambda x: x['change_pct'], reverse=True)
+    losers.sort(key=lambda x: x['change_pct'])
+
+    total_change_pct = (total_change / (total_value - total_change)) * 100 if total_value > total_change else 0
+
+    summary = f"""Portfolio Value: ${total_value:,.2f}
+Today's Change: ${total_change:+,.2f} ({total_change_pct:+.2f}%)
+
+Top Gainers:
+"""
+    for stock in gainers[:3]:
+        summary += f"  {stock['symbol']}: {stock['change_pct']:+.2f}%\n"
+
+    summary += "\nTop Losers:\n"
+    for stock in losers[:3]:
+        summary += f"  {stock['symbol']}: {stock['change_pct']:+.2f}%\n"
+
+    return summary
+
+def extract_insights(stocks):
+    """Extract actionable insights from stock data"""
+    insights = []
+
+    # Detect strong performers (>5% gain)
+    for symbol, data in stocks.items():
+        if 'error' in data:
+            continue
+
+        change_pct = data.get('change_percent', 0)
+
+        if change_pct > 5:
+            insights.append({
+                'type': 'strong_gain',
+                'symbol': symbol,
+                'message': f"{symbol} up {change_pct:+.2f}% - Strong performance",
+                'severity': 'positive',
+                'action': f"Research what's driving {symbol}'s momentum"
+            })
+        elif change_pct < -5:
+            insights.append({
+                'type': 'sharp_decline',
+                'symbol': symbol,
+                'message': f"{symbol} down {change_pct:+.2f}% - Significant drop",
+                'severity': 'negative',
+                'action': f"Review {symbol} position and news"
+            })
+        elif abs(change_pct) > 3:
+            insights.append({
+                'type': 'notable_move',
+                'symbol': symbol,
+                'message': f"{symbol} moved {change_pct:+.2f}% today",
+                'severity': 'neutral',
+                'action': f"Monitor {symbol} for continued volatility"
+            })
+
+    # Add general insights if portfolio is doing well
+    total_gainers = sum(1 for s, d in stocks.items() if 'error' not in d and d.get('change_percent', 0) > 0)
+    total_stocks = sum(1 for s, d in stocks.items() if 'error' not in d)
+
+    if total_gainers > total_stocks * 0.75:
+        insights.append({
+            'type': 'broad_rally',
+            'symbol': 'PORTFOLIO',
+            'message': f"{total_gainers} of {total_stocks} stocks are up - Strong market day",
+            'severity': 'positive',
+            'action': 'Consider taking profits on overextended positions'
+        })
+
+    return insights[:5]  # Return top 5 insights
+
+def detect_alerts(stocks):
+    """Detect alerts for unusual activity"""
+    alerts = []
+
+    for symbol, data in stocks.items():
+        if 'error' in data:
+            continue
+
+        change_pct = data.get('change_percent', 0)
+        volume = data.get('volume', 0)
+
+        # Alert on extreme moves
+        if abs(change_pct) > 10:
+            alerts.append({
+                'type': 'extreme_move',
+                'symbol': symbol,
+                'message': f"{symbol}: {change_pct:+.2f}% move - Extreme volatility!",
+                'severity': 'urgent',
+                'timestamp': datetime.now().isoformat()
+            })
+
+        # Alert on significant moves
+        elif abs(change_pct) > 5:
+            alerts.append({
+                'type': 'significant_move',
+                'symbol': symbol,
+                'message': f"{symbol}: {change_pct:+.2f}% - Significant movement",
+                'severity': 'warning',
+                'timestamp': datetime.now().isoformat()
+            })
+
+    return alerts
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
