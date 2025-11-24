@@ -3098,7 +3098,6 @@ HTML = """
             // Limit text length for browser TTS (some browsers have limits)
             if (text.length > 1000) {
                 text = text.substring(0, 1000) + '...';
-                console.log('Truncated text to 1000 chars for TTS');
             }
 
             // Use browser's speech synthesis with optimized settings for natural sound
@@ -3116,38 +3115,26 @@ HTML = """
             const voice = getBestMaleUsVoice();
             if (voice) {
                 utterance.voice = voice;
-                console.log('Using voice:', voice.name);
-            } else {
-                console.log('Using default system voice');
             }
 
             // Handle speech end
             utterance.onend = () => {
-                console.log('Speech ended successfully');
                 isSpeaking = false;
                 const stopBtn = document.getElementById('stop-btn');
                 if (stopBtn) stopBtn.style.display = 'none';
             };
 
-            // Handle speech error with detailed logging
+            // Handle speech error
             utterance.onerror = (e) => {
-                console.error('Speech error:', e.error, 'Type:', e.type, 'Char index:', e.charIndex);
+                console.error('Speech synthesis failed:', e.error);
                 isSpeaking = false;
                 const stopBtn = document.getElementById('stop-btn');
                 if (stopBtn) stopBtn.style.display = 'none';
-
-                // Show user-friendly error
-                if (e.error === 'not-allowed') {
-                    console.warn('Speech blocked by browser. User needs to interact with page first.');
-                } else if (e.error === 'network') {
-                    console.warn('Speech failed due to network issue');
-                }
             };
 
             // Start speaking
             try {
                 window.speechSynthesis.speak(utterance);
-                console.log('Speech started, text length:', text.length);
             } catch (err) {
                 console.error('Failed to start speech:', err);
                 isSpeaking = false;
@@ -3397,15 +3384,13 @@ HTML = """
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/service-worker.js')
                     .then(registration => {
-                        console.log('ServiceWorker registered:', registration.scope);
-
                         // Check for updates periodically
                         setInterval(() => {
                             registration.update();
                         }, 60000); // Check every minute
                     })
                     .catch(error => {
-                        console.log('ServiceWorker registration failed:', error);
+                        console.error('ServiceWorker registration failed:', error);
                     });
             });
         }
@@ -3438,7 +3423,6 @@ HTML = """
 
             // Wait for the user's response
             const { outcome } = await deferredPrompt.userChoice;
-            console.log(`User response: ${outcome}`);
 
             // Clear the deferredPrompt
             deferredPrompt = null;
@@ -3452,7 +3436,6 @@ HTML = """
 
         // Detect if app is running as PWA
         window.addEventListener('appinstalled', () => {
-            console.log('PWA installed successfully');
             installBanner.classList.remove('show');
         });
 
@@ -3527,8 +3510,6 @@ HTML = """
                 const permission = await Notification.requestPermission();
 
                 if (permission === 'granted') {
-                    console.log('Notification permission granted');
-
                     // Subscribe to push notifications
                     const registration = await navigator.serviceWorker.ready;
                     const subscription = await registration.pushManager.subscribe({
@@ -3536,7 +3517,6 @@ HTML = """
                         applicationServerKey: null // Add your VAPID public key here if needed
                     });
 
-                    console.log('Push subscription:', subscription);
                     // Send subscription to server if needed
                 }
             }
@@ -3551,13 +3531,11 @@ HTML = """
 
         // ===== OFFLINE DETECTION =====
         window.addEventListener('online', () => {
-            console.log('Back online');
-            // Optionally show a toast notification
+            // App back online
         });
 
         window.addEventListener('offline', () => {
-            console.log('Gone offline');
-            // Optionally show a toast notification
+            // App offline
         });
 
         // ===== TOUCH GESTURES FOR MOBILE =====
@@ -3579,11 +3557,9 @@ HTML = """
             // Swipe gestures (optional - can be extended)
             if (Math.abs(deltaX) > 100 && Math.abs(deltaY) < 50) {
                 if (deltaX > 0) {
-                    console.log('Swipe right');
-                    // Add swipe right action if needed
+                    // Swipe right action
                 } else {
-                    console.log('Swipe left');
-                    // Add swipe left action if needed
+                    // Swipe left action
                 }
             }
         }, { passive: true });
@@ -3608,6 +3584,11 @@ def manifest():
 def service_worker():
     """Serve service worker"""
     return send_file('service-worker.js', mimetype='application/javascript')
+
+@app.route('/offline.html')
+def offline():
+    """Serve offline page for PWA"""
+    return send_file('offline.html')
 
 @app.route('/chat', methods=['POST'])
 @login_required
