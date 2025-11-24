@@ -1645,9 +1645,39 @@ HTML = """
             animation: pulse 1.5s ease-in-out infinite;
         }
 
+        .stop-button {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+            animation: pulse-soft 2s ease-in-out infinite;
+        }
+
+        .stop-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.5);
+        }
+
+        .stop-button:active {
+            transform: scale(0.95);
+        }
+
         @keyframes pulse {
             0%, 100% { transform: scale(1); }
             50% { transform: scale(1.1); }
+        }
+
+        @keyframes pulse-soft {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
         }
 
         .send-button {
@@ -1991,6 +2021,7 @@ HTML = """
             }
 
             .mic-button,
+            .stop-button,
             .send-button {
                 width: 44px;
                 height: 44px;
@@ -2286,6 +2317,7 @@ HTML = """
             <!-- Input Section -->
             <div class="input-section">
                 <button class="mic-button" id="mic-btn" onclick="toggleVoice()" title="Click to talk">🎤</button>
+                <button class="stop-button" id="stop-btn" onclick="stopSpeaking()" title="Stop speaking" style="display: none;">🔇</button>
                 <div class="input-wrapper">
                     <input type="text" id="user-input" class="input-field" placeholder="Ask Sully anything or click 🎤 to talk..." onkeypress="handleKeyPress(event)" autocomplete="off">
                 </div>
@@ -2975,37 +3007,79 @@ HTML = """
                 .trim();
         }
 
+        // Track current audio/speech
+        let currentAudio = null;
+        let isSpeaking = false;
+
         // Speech Synthesis with natural male voice (optimized for natural sound)
         function speak(text) {
             // Clean text for natural speech
             const cleanText = cleanTextForSpeech(text);
             if (!cleanText) return;
 
+            // Stop any current speech
+            stopSpeaking();
+
+            // Show stop button
+            const stopBtn = document.getElementById('stop-btn');
+            if (stopBtn) stopBtn.style.display = 'flex';
+            isSpeaking = true;
+
             // Prefer server TTS if enabled (ElevenLabs)
             if (window.SERVER_TTS_ENABLED) {
                 try {
                     const ttsUrl = '/tts?text=' + encodeURIComponent(cleanText);
                     const audio = new Audio(ttsUrl);
+                    currentAudio = audio;
 
                     // Handle audio loading errors
                     audio.addEventListener('error', (e) => {
                         console.warn('Server TTS audio load failed, falling back to Web Speech:', e);
+                        currentAudio = null;
                         fallbackToWebSpeech(cleanText);
+                    });
+
+                    // Handle audio end
+                    audio.addEventListener('ended', () => {
+                        currentAudio = null;
+                        isSpeaking = false;
+                        if (stopBtn) stopBtn.style.display = 'none';
                     });
 
                     // Try to play
                     audio.play().catch(err => {
                         console.warn('Audio play blocked or failed, falling back to Web Speech:', err);
+                        currentAudio = null;
                         fallbackToWebSpeech(cleanText);
                     });
                     return;
                 } catch (e) {
                     console.warn('Server TTS error, falling back to Web Speech:', e);
+                    currentAudio = null;
                 }
             }
 
             // Fallback to browser Web Speech API
             fallbackToWebSpeech(cleanText);
+        }
+
+        function stopSpeaking() {
+            // Stop audio element if playing
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio.currentTime = 0;
+                currentAudio = null;
+            }
+
+            // Stop Web Speech API
+            if (window.speechSynthesis) {
+                window.speechSynthesis.cancel();
+            }
+
+            // Hide stop button
+            const stopBtn = document.getElementById('stop-btn');
+            if (stopBtn) stopBtn.style.display = 'none';
+            isSpeaking = false;
         }
 
         function fallbackToWebSpeech(text) {
@@ -3029,6 +3103,21 @@ HTML = """
                 utterance.voice = voice;
                 console.log('Using voice:', voice.name, '| Rate:', utterance.rate, '| Pitch:', utterance.pitch);
             }
+
+            // Handle speech end
+            utterance.onend = () => {
+                isSpeaking = false;
+                const stopBtn = document.getElementById('stop-btn');
+                if (stopBtn) stopBtn.style.display = 'none';
+            };
+
+            // Handle speech error
+            utterance.onerror = (e) => {
+                console.warn('Speech synthesis error:', e);
+                isSpeaking = false;
+                const stopBtn = document.getElementById('stop-btn');
+                if (stopBtn) stopBtn.style.display = 'none';
+            };
 
             window.speechSynthesis.speak(utterance);
         }
