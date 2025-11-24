@@ -3031,12 +3031,16 @@ HTML = """
                     const ttsUrl = '/tts?text=' + encodeURIComponent(cleanText);
                     const audio = new Audio(ttsUrl);
                     currentAudio = audio;
+                    let hasFailedOver = false; // Prevent double fallback
 
                     // Handle audio loading errors
                     audio.addEventListener('error', (e) => {
-                        console.warn('Server TTS audio load failed, falling back to Web Speech:', e);
-                        currentAudio = null;
-                        fallbackToWebSpeech(cleanText);
+                        if (!hasFailedOver) {
+                            hasFailedOver = true;
+                            console.warn('Server TTS audio load failed, falling back to Web Speech:', e);
+                            currentAudio = null;
+                            fallbackToWebSpeech(cleanText);
+                        }
                     });
 
                     // Handle audio end
@@ -3048,9 +3052,12 @@ HTML = """
 
                     // Try to play
                     audio.play().catch(err => {
-                        console.warn('Audio play blocked or failed, falling back to Web Speech:', err);
-                        currentAudio = null;
-                        fallbackToWebSpeech(cleanText);
+                        if (!hasFailedOver) {
+                            hasFailedOver = true;
+                            console.warn('Audio play blocked or failed, falling back to Web Speech:', err);
+                            currentAudio = null;
+                            fallbackToWebSpeech(cleanText);
+                        }
                     });
                     return;
                 } catch (e) {
