@@ -3721,19 +3721,59 @@ def get_history():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+def fetch_stock_data_from_yahoo(symbols):
+    """Fetch real-time stock data from Yahoo Finance without requiring Groq"""
+    stock_data = {}
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    })
+
+    for symbol in symbols:
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+            params = {'interval': '1d', 'range': '30d'}
+            response = session.get(url, params=params, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                result = data['chart']['result'][0]
+                quote = result['meta']
+                current_price = quote.get('regularMarketPrice', 0)
+                previous_close = quote.get('previousClose', 0)
+                change = current_price - previous_close
+                change_percent = (change / previous_close * 100) if previous_close else 0
+
+                # Extract historical prices for chart
+                history = []
+                if 'indicators' in result and 'quote' in result['indicators']:
+                    closes = result['indicators']['quote'][0].get('close', [])
+                    history = [price for price in closes if price is not None]
+
+                stock_data[symbol] = {
+                    'symbol': symbol,
+                    'price': round(current_price, 2),
+                    'change': round(change, 2),
+                    'change_percent': round(change_percent, 2),
+                    'previous_close': round(previous_close, 2),
+                    'volume': quote.get('regularMarketVolume', 0),
+                    'history': history[-30:] if history else []
+                }
+        except Exception as e:
+            stock_data[symbol] = {'error': str(e), 'symbol': symbol}
+
+    return stock_data
+
 @app.route('/api/stocks', methods=['GET'])
 def get_stocks():
     """Get real-time stock data from Yahoo Finance"""
     try:
-        # Initialize assistant to get stock data
-        assistant = SullyAssistant(GROQ_API_KEY)
-
         # Get stocks from query param or use default
         symbols_param = request.args.get('symbols', '')
         symbols = [s.strip() for s in symbols_param.split(',')] if symbols_param else STOCK_SYMBOLS
 
-        # Fetch real stock data
-        stock_data = assistant.get_stock_data(symbols)
+        # Fetch real stock data directly
+        stock_data = fetch_stock_data_from_yahoo(symbols)
 
         return jsonify({'stocks': stock_data, 'count': len(stock_data)})
 
