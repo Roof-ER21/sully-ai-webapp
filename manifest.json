@@ -1,23 +1,23 @@
 {
-  "name": "Sully AI - Executive Dashboard",
-  "short_name": "Sully AI",
+  "name": "Sully 21 - Executive Dashboard",
+  "short_name": "Sully 21",
   "description": "Your AI-powered executive assistant for stocks, sports, and insights",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#1a1a1a",
+  "background_color": "#0a0a0a",
   "theme_color": "#c8102e",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='128' fill='%23c8102e'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='280' fill='white'>📊</text></svg>",
+      "src": "/icon-192.png",
       "sizes": "192x192",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='128' fill='%23c8102e'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='280' fill='white'>📊</text></svg>",
+      "src": "/icon-512.png",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ],

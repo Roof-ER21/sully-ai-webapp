@@ -516,12 +516,12 @@ HTML = """
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Sully AI">
+    <meta name="apple-mobile-web-app-title" content="Sully 21">
     <link rel="manifest" href="/manifest.json">
-    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='128' fill='%233b82f6'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='280' fill='white'>📊</text></svg>">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 
-    <title>Sully AI - Executive Dashboard | Roof ER</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+    <title>Sully 21 AI - Executive Dashboard | Roof ER</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
@@ -2175,9 +2175,9 @@ HTML = """
         <div class="header">
             <div class="header-content">
                 <div class="header-left">
-                    <div class="logo-circle">📊</div>
+                    <img src="/sully21-logo.png" alt="Sully 21" class="logo-circle" style="border-radius: 8px; object-fit: contain; background: transparent;">
                     <div class="title-section">
-                        <h1>Sully AI</h1>
+                        <h1>Sully 21</h1>
                         <div class="subtitle">Executive Dashboard</div>
                     </div>
                 </div>
@@ -3571,6 +3571,31 @@ def service_worker():
 def offline():
     """Serve offline page for PWA"""
     return send_file('offline.html')
+
+@app.route('/sully21-logo.png')
+def logo():
+    """Serve Sully 21 logo"""
+    return send_file('sully21-logo.png', mimetype='image/png')
+
+@app.route('/favicon.ico')
+def favicon():
+    """Serve favicon"""
+    return send_file('favicon.ico', mimetype='image/x-icon')
+
+@app.route('/apple-touch-icon.png')
+def apple_icon():
+    """Serve Apple touch icon"""
+    return send_file('apple-touch-icon.png', mimetype='image/png')
+
+@app.route('/icon-192.png')
+def icon_192():
+    """Serve PWA icon 192"""
+    return send_file('icon-192.png', mimetype='image/png')
+
+@app.route('/icon-512.png')
+def icon_512():
+    """Serve PWA icon 512"""
+    return send_file('icon-512.png', mimetype='image/png')
 
 @app.route('/chat', methods=['POST'])
 @login_required
