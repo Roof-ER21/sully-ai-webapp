@@ -3649,6 +3649,22 @@ def get_briefing():
         # Analyze portfolio performance
         portfolio_analysis = analyze_portfolio_performance(current_data['stocks'])
 
+        # Fetch sports news for Patriots and Celtics
+        patriots_news = aggregator.search_live_news('patriots')
+        celtics_news = aggregator.search_live_news('celtics')
+
+        # Fetch VIP news for Elon Musk and Trump
+        elon_news = aggregator.search_vip_news('elon_musk')
+        trump_news = aggregator.search_vip_news('trump')
+
+        # Combine all news sections
+        news_section = f"""
+{patriots_news}
+{celtics_news}
+{elon_news}
+{trump_news}
+"""
+
         # Create briefing prompt based on time of day
         if time_of_day == 'morning':
             briefing_prompt = f"""Generate a concise morning briefing for a busy executive. Include:
@@ -3656,12 +3672,16 @@ def get_briefing():
 PORTFOLIO PERFORMANCE:
 {portfolio_analysis}
 
+BREAKING NEWS & UPDATES:
+{news_section}
+
 1. Portfolio Status: Quick summary of overall performance
 2. Top 3 Insights: Most important things to know today
 3. Key Movers: Stocks with significant changes (>3%)
-4. Action Items: What to watch today
+4. Sports & VIP Updates: Brief mention of Patriots, Celtics, Elon, and Trump news highlights
+5. Action Items: What to watch today
 
-Keep it under 200 words. Be direct and actionable. Use bullet points."""
+Keep it under 250 words. Be direct and actionable. Use bullet points."""
 
         else:
             briefing_prompt = f"""Generate an end-of-day briefing for a busy executive. Include:
@@ -3669,12 +3689,16 @@ Keep it under 200 words. Be direct and actionable. Use bullet points."""
 PORTFOLIO PERFORMANCE:
 {portfolio_analysis}
 
+BREAKING NEWS & UPDATES:
+{news_section}
+
 1. Daily Performance: How did the portfolio perform today?
 2. Key Winners & Losers: Top 3 of each
 3. Notable Events: Any significant market moves or news
-4. Tomorrow's Watch List: What to monitor
+4. Sports & VIP Updates: Brief mention of Patriots, Celtics, Elon, and Trump news highlights
+5. Tomorrow's Watch List: What to monitor
 
-Keep it under 200 words. Be direct and insightful."""
+Keep it under 250 words. Be direct and insightful."""
 
         # Generate briefing using AI
         briefing = sully.chat(briefing_prompt, current_data)
@@ -4003,8 +4027,38 @@ def save_conversation():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-def analyze_portfolio_performance(stocks):
-    """Analyze portfolio performance and return formatted summary"""
+# Stock symbol to company name mapping for better TTS
+STOCK_NAMES = {
+    'AAPL': 'Apple',
+    'GOOGL': 'Google',
+    'MSFT': 'Microsoft',
+    'AMZN': 'Amazon',
+    'TSLA': 'Tesla',
+    'META': 'Meta',
+    'NVDA': 'NVIDIA',
+    'DJT': 'Truth Social'
+}
+
+def get_user_portfolio_holdings():
+    """Get actual portfolio holdings for the default user"""
+    try:
+        user = get_or_create_user()
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT symbol, shares FROM portfolio WHERE user_id = ?', (user['id'],))
+        holdings = {}
+        for row in cursor.fetchall():
+            holdings[row[0]] = row[1]
+        db.close()
+        return holdings
+    except:
+        return {}
+
+def analyze_portfolio_performance(stocks, portfolio_holdings=None):
+    """Analyze portfolio performance using actual holdings"""
+    if portfolio_holdings is None:
+        portfolio_holdings = get_user_portfolio_holdings()
+
     total_value = 0
     total_change = 0
     gainers = []
@@ -4014,21 +4068,26 @@ def analyze_portfolio_performance(stocks):
         if 'error' in data:
             continue
 
+        shares = portfolio_holdings.get(symbol, 0)
+        if shares == 0:
+            continue  # Skip stocks user doesn't own
+
         price = data.get('price', 0)
         change = data.get('change', 0)
         change_pct = data.get('change_percent', 0)
 
-        # Assume 10 shares of each
-        position_value = price * 10
-        position_change = change * 10
+        # Use actual shares owned
+        position_value = price * shares
+        position_change = change * shares
 
         total_value += position_value
         total_change += position_change
 
+        stock_name = STOCK_NAMES.get(symbol, symbol)
         if change > 0:
-            gainers.append({'symbol': symbol, 'change': change, 'change_pct': change_pct})
+            gainers.append({'symbol': symbol, 'name': stock_name, 'change': change, 'change_pct': change_pct, 'shares': shares})
         elif change < 0:
-            losers.append({'symbol': symbol, 'change': change, 'change_pct': change_pct})
+            losers.append({'symbol': symbol, 'name': stock_name, 'change': change, 'change_pct': change_pct, 'shares': shares})
 
     # Sort by change percentage
     gainers.sort(key=lambda x: x['change_pct'], reverse=True)
@@ -4036,17 +4095,21 @@ def analyze_portfolio_performance(stocks):
 
     total_change_pct = (total_change / (total_value - total_change)) * 100 if total_value > total_change else 0
 
+    if total_value == 0:
+        return "No portfolio holdings entered yet. Add shares to track your portfolio."
+
     summary = f"""Portfolio Value: ${total_value:,.2f}
 Today's Change: ${total_change:+,.2f} ({total_change_pct:+.2f}%)
 
 Top Gainers:
 """
     for stock in gainers[:3]:
-        summary += f"  {stock['symbol']}: {stock['change_pct']:+.2f}%\n"
+        summary += f"  {stock['name']} ({stock['shares']} shares): {stock['change_pct']:+.2f}%\n"
 
-    summary += "\nTop Losers:\n"
-    for stock in losers[:3]:
-        summary += f"  {stock['symbol']}: {stock['change_pct']:+.2f}%\n"
+    if losers:
+        summary += "\nTop Losers:\n"
+        for stock in losers[:3]:
+            summary += f"  {stock['name']} ({stock['shares']} shares): {stock['change_pct']:+.2f}%\n"
 
     return summary
 
