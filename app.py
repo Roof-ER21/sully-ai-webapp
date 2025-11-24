@@ -226,27 +226,35 @@ class NewsAggregator:
         for symbol in symbols:
             try:
                 url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-                params = {'interval': '1d', 'range': '5d'}
+                params = {'interval': '1d', 'range': '30d'}
                 response = self.session.get(url, params=params, timeout=10)
 
                 if response.status_code == 200:
                     data = response.json()
-                    quote = data['chart']['result'][0]['meta']
+                    result = data['chart']['result'][0]
+                    quote = result['meta']
                     current_price = quote.get('regularMarketPrice', 0)
                     previous_close = quote.get('previousClose', 0)
                     change = current_price - previous_close
                     change_percent = (change / previous_close * 100) if previous_close else 0
 
+                    # Extract historical prices for chart
+                    history = []
+                    if 'indicators' in result and 'quote' in result['indicators']:
+                        closes = result['indicators']['quote'][0].get('close', [])
+                        history = [price for price in closes if price is not None]
+
                     stock_data[symbol] = {
                         'symbol': symbol,
-                        'price': current_price,
-                        'change': change,
-                        'change_percent': change_percent,
-                        'previous_close': previous_close,
-                        'volume': quote.get('regularMarketVolume', 0)
+                        'price': round(current_price, 2),
+                        'change': round(change, 2),
+                        'change_percent': round(change_percent, 2),
+                        'previous_close': round(previous_close, 2),
+                        'volume': quote.get('regularMarketVolume', 0),
+                        'history': history[-30:] if history else []  # Last 30 days
                     }
             except Exception as e:
-                stock_data[symbol] = {'error': str(e)}
+                stock_data[symbol] = {'error': str(e), 'symbol': symbol}
         return stock_data
 
     def get_full_briefing(self, stock_symbols: List[str]) -> Dict[str, Any]:
@@ -2361,32 +2369,32 @@ HTML = """
         // Load stock data and populate dashboard
         async function loadStockData() {
             try {
-                const response = await fetch('/chat', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({message: 'Get current stock data'})
-                });
+                const response = await fetch('/api/stocks');
 
                 if (!response.ok) {
                     console.error('Failed to load stock data');
                     return;
                 }
 
-                // For now, create demo data (will be replaced with real API data)
-                const stocks = ['TSLA', 'AAPL', 'NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'DJT'];
-                stockData = {};
+                const data = await response.json();
 
-                stocks.forEach(symbol => {
-                    const basePrice = Math.random() * 500 + 100;
-                    const change = (Math.random() - 0.5) * 20;
-                    const changePercent = (change / basePrice) * 100;
+                // Convert stocks object to our format
+                stockData = {};
+                Object.keys(data.stocks).forEach(symbol => {
+                    const stock = data.stocks[symbol];
+
+                    // Skip stocks with errors
+                    if (stock.error) {
+                        console.error(`Error loading ${symbol}:`, stock.error);
+                        return;
+                    }
 
                     stockData[symbol] = {
-                        symbol: symbol,
-                        price: basePrice.toFixed(2),
-                        change: change.toFixed(2),
-                        change_percent: changePercent.toFixed(2),
-                        history: generateMockHistory()
+                        symbol: stock.symbol,
+                        price: parseFloat(stock.price).toFixed(2),
+                        change: parseFloat(stock.change).toFixed(2),
+                        change_percent: parseFloat(stock.change_percent).toFixed(2),
+                        history: stock.history || []
                     };
                 });
 
@@ -2395,17 +2403,6 @@ HTML = """
             } catch (error) {
                 console.error('Error loading stock data:', error);
             }
-        }
-
-        // Generate mock historical data for charts
-        function generateMockHistory() {
-            const points = [];
-            let baseValue = 100;
-            for (let i = 0; i < 30; i++) {
-                baseValue += (Math.random() - 0.48) * 5;
-                points.push(baseValue);
-            }
-            return points;
         }
 
         // Render the entire dashboard
@@ -3722,6 +3719,26 @@ def get_history():
         return jsonify({'history': history})
 
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/stocks', methods=['GET'])
+def get_stocks():
+    """Get real-time stock data from Yahoo Finance"""
+    try:
+        # Initialize assistant to get stock data
+        assistant = SullyAssistant(GROQ_API_KEY)
+
+        # Get stocks from query param or use default
+        symbols_param = request.args.get('symbols', '')
+        symbols = [s.strip() for s in symbols_param.split(',')] if symbols_param else STOCK_SYMBOLS
+
+        # Fetch real stock data
+        stock_data = assistant.get_stock_data(symbols)
+
+        return jsonify({'stocks': stock_data, 'count': len(stock_data)})
+
+    except Exception as e:
+        print(f"Error fetching stocks: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/history', methods=['POST'])
