@@ -162,6 +162,20 @@ def init_db():
         )
     ''')
 
+    # Portfolio holdings table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS portfolio (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            symbol TEXT NOT NULL,
+            shares REAL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, symbol),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+
     db.commit()
     db.close()
 
@@ -877,6 +891,71 @@ HTML = """
             width: 100%;
             height: 60px;
             margin-top: 12px;
+        }
+
+        /* Portfolio Holdings */
+        .stock-holdings {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 12px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .holdings-label {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.6);
+            font-weight: 600;
+        }
+
+        .shares-input {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 8px 12px;
+            color: white;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+            min-width: 80px;
+            max-width: 120px;
+        }
+
+        .shares-input:focus {
+            outline: none;
+            border-color: var(--roofer-red);
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .save-shares-btn {
+            background: var(--roofer-red);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .save-shares-btn:hover {
+            background: #a00d24;
+            transform: translateY(-1px);
+        }
+
+        .save-shares-btn:active {
+            transform: translateY(0);
+        }
+
+        .holdings-value {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--roofer-red);
         }
 
         /* Chat Section */
@@ -2365,6 +2444,39 @@ HTML = """
         // Dashboard Stock Data Management
         let stockData = {};
         let charts = {};
+        let portfolio = {}; // User's actual holdings {symbol: shares}
+
+        // Load portfolio holdings
+        async function loadPortfolio() {
+            try {
+                const response = await fetch('/api/portfolio');
+                if (response.ok) {
+                    const data = await response.json();
+                    portfolio = data.holdings || {};
+                }
+            } catch (error) {
+                console.error('Error loading portfolio:', error);
+                portfolio = {};
+            }
+        }
+
+        // Save portfolio holding
+        async function saveHolding(symbol, shares) {
+            try {
+                const response = await fetch('/api/portfolio', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({symbol, shares})
+                });
+
+                if (response.ok) {
+                    portfolio[symbol] = shares;
+                    renderDashboard(); // Re-render with new values
+                }
+            } catch (error) {
+                console.error('Error saving holding:', error);
+            }
+        }
 
         // Load stock data and populate dashboard
         async function loadStockData() {
@@ -2419,8 +2531,9 @@ HTML = """
             let bestStock = { symbol: '—', change: -Infinity };
 
             Object.values(stockData).forEach(stock => {
-                const stockValue = parseFloat(stock.price) * 10; // Assume 10 shares each
-                const stockChange = parseFloat(stock.change) * 10;
+                const shares = portfolio[stock.symbol] || 0; // Use actual holdings
+                const stockValue = parseFloat(stock.price) * shares;
+                const stockChange = parseFloat(stock.change) * shares;
 
                 totalValue += stockValue;
                 totalChange += stockChange;
@@ -2476,6 +2589,9 @@ HTML = """
         // Create a single stock card
         function createStockCard(stock) {
             const isPositive = parseFloat(stock.change) >= 0;
+            const shares = portfolio[stock.symbol] || 0;
+            const totalValue = (parseFloat(stock.price) * shares).toFixed(2);
+
             const card = document.createElement('div');
             card.className = 'stock-card';
             card.innerHTML = `
@@ -2489,6 +2605,18 @@ HTML = """
                         <span>${isPositive ? '+' : ''}${stock.change} (${isPositive ? '+' : ''}${stock.change_percent}%)</span>
                     </div>
                 </div>
+                <div class="stock-holdings">
+                    <span class="holdings-label">Shares:</span>
+                    <input type="number"
+                           class="shares-input"
+                           id="shares-${stock.symbol}"
+                           value="${shares}"
+                           min="0"
+                           step="0.01"
+                           placeholder="0">
+                    <button class="save-shares-btn" onclick="saveShares('${stock.symbol}')">Save</button>
+                    ${shares > 0 ? `<div class="holdings-value">= $${totalValue.replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",")}</div>` : ''}
+                </div>
                 <div class="stock-chart">
                     <canvas id="chart-${stock.symbol}"></canvas>
                 </div>
@@ -2501,6 +2629,13 @@ HTML = """
 
             return card;
         }
+
+        // Global function to save shares (called from onclick)
+        window.saveShares = async function(symbol) {
+            const input = document.getElementById(`shares-${symbol}`);
+            const shares = parseFloat(input.value) || 0;
+            await saveHolding(symbol, shares);
+        };
 
         // Create Chart.js chart for stock
         function createStockChart(stock) {
@@ -2705,13 +2840,17 @@ HTML = """
         }
 
         // Load data on page load
-        window.addEventListener('DOMContentLoaded', () => {
+        window.addEventListener('DOMContentLoaded', async () => {
             updateDailyMotivation();  // Load today's CEO message
-            loadStockData();
+            await loadPortfolio();  // Load portfolio first
+            await loadStockData();  // Then load stock data
             loadInsights();
 
             // Refresh every 5 minutes
-            setInterval(loadStockData, 300000);
+            setInterval(async () => {
+                await loadPortfolio();
+                await loadStockData();
+            }, 300000);
             setInterval(loadInsights, 300000);
         });
 
@@ -3779,6 +3918,63 @@ def get_stocks():
 
     except Exception as e:
         print(f"Error fetching stocks: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/portfolio', methods=['GET'])
+@login_required
+def get_portfolio():
+    """Get user's portfolio holdings"""
+    try:
+        user = get_or_create_user()
+        db = get_db()
+        cursor = db.cursor()
+
+        cursor.execute('''
+            SELECT symbol, shares FROM portfolio
+            WHERE user_id = ?
+        ''', (user['id'],))
+
+        holdings = {}
+        for row in cursor.fetchall():
+            holdings[row[0]] = row[1]
+
+        db.close()
+        return jsonify({'holdings': holdings})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/portfolio', methods=['POST'])
+@login_required
+def update_portfolio():
+    """Update portfolio holdings for a symbol"""
+    try:
+        data = request.get_json()
+        symbol = data.get('symbol', '').upper()
+        shares = float(data.get('shares', 0))
+
+        if not symbol:
+            return jsonify({'error': 'Symbol required'}), 400
+
+        user = get_or_create_user()
+        db = get_db()
+        cursor = db.cursor()
+
+        # Insert or update holding
+        cursor.execute('''
+            INSERT INTO portfolio (user_id, symbol, shares, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id, symbol) DO UPDATE SET
+                shares = excluded.shares,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (user['id'], symbol, shares))
+
+        db.commit()
+        db.close()
+
+        return jsonify({'success': True, 'symbol': symbol, 'shares': shares})
+
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/history', methods=['POST'])
