@@ -490,7 +490,7 @@ HTML = """
 
     <!-- PWA Meta Tags -->
     <meta name="description" content="Your AI-powered executive assistant for stocks, sports, and insights">
-    <meta name="theme-color" content="#3b82f6">
+    <meta name="theme-color" content="#c8102e">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -510,23 +510,25 @@ HTML = """
         }
 
         :root {
-            --bg-primary: #0a0e27;
-            --bg-secondary: #121729;
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2a2a2a;
             --bg-card: rgba(255, 255, 255, 0.05);
             --border-color: rgba(255, 255, 255, 0.1);
             --text-primary: #ffffff;
             --text-secondary: #9ca3af;
             --accent-green: #10b981;
-            --accent-red: #ef4444;
-            --accent-blue: #3b82f6;
-            --accent-purple: #8b5cf6;
-            --glass-bg: rgba(255, 255, 255, 0.03);
-            --glass-border: rgba(255, 255, 255, 0.08);
+            --accent-red: #c8102e;
+            --accent-blue: #3d3d3d;
+            --accent-purple: #c8102e;
+            --glass-bg: rgba(61, 61, 61, 0.15);
+            --glass-border: rgba(200, 16, 46, 0.2);
+            --roofer-red: #c8102e;
+            --roofer-charcoal: #3d3d3d;
         }
 
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: linear-gradient(135deg, #0a0e27 0%, #1a1535 50%, #0f1a3d 100%);
+            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 50%, #3d3d3d 100%);
             background-attachment: fixed;
             color: var(--text-primary);
             min-height: 100vh;
@@ -544,9 +546,9 @@ HTML = """
             width: 200%;
             height: 200%;
             background:
-                radial-gradient(circle at 20% 80%, rgba(16, 185, 129, 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 80% 20%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 40% 40%, rgba(139, 92, 246, 0.05) 0%, transparent 50%);
+                radial-gradient(circle at 20% 80%, rgba(200, 16, 46, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(61, 61, 61, 0.2) 0%, transparent 50%),
+                radial-gradient(circle at 40% 40%, rgba(200, 16, 46, 0.08) 0%, transparent 50%);
             animation: meshMove 20s ease-in-out infinite;
             z-index: 0;
             pointer-events: none;
@@ -577,6 +579,78 @@ HTML = """
             padding: 24px;
             margin-bottom: 24px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Welcome Message Banner */
+        .welcome-banner {
+            background: linear-gradient(135deg, var(--roofer-red) 0%, rgba(200, 16, 46, 0.8) 100%);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 2px solid rgba(200, 16, 46, 0.4);
+            border-radius: 16px;
+            padding: 20px 28px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 32px rgba(200, 16, 46, 0.3);
+            animation: slideInDown 0.6s ease-out;
+        }
+
+        @keyframes slideInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .welcome-content {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .welcome-icon {
+            font-size: 40px;
+            animation: wave 2s ease-in-out infinite;
+        }
+
+        @keyframes wave {
+            0%, 100% { transform: rotate(0deg); }
+            25% { transform: rotate(14deg); }
+            75% { transform: rotate(-14deg); }
+        }
+
+        .welcome-text {
+            flex: 1;
+        }
+
+        .welcome-text h2 {
+            font-size: 22px;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 6px;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .welcome-text p {
+            font-size: 15px;
+            color: rgba(255, 255, 255, 0.95);
+            line-height: 1.5;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        }
+
+        .roofer-badge {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            color: white;
+            display: inline-block;
+            margin-left: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
         }
 
         .header-content {
@@ -1689,6 +1763,31 @@ HTML = """
                 margin-bottom: 16px;
             }
 
+            .welcome-banner {
+                padding: 16px 20px;
+                border-radius: 12px;
+                margin-bottom: 16px;
+            }
+
+            .welcome-icon {
+                font-size: 32px;
+            }
+
+            .welcome-text h2 {
+                font-size: 18px;
+            }
+
+            .welcome-text p {
+                font-size: 14px;
+            }
+
+            .roofer-badge {
+                display: block;
+                margin-left: 0;
+                margin-top: 6px;
+                width: fit-content;
+            }
+
             .header-content {
                 flex-direction: column;
                 align-items: flex-start;
@@ -1979,6 +2078,17 @@ HTML = """
                             <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6m-14.36-.36l4.24 4.24m4.24-4.24l4.24 4.24"/>
                         </svg>
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Welcome Message for Oliver Brown -->
+        <div class="welcome-banner">
+            <div class="welcome-content">
+                <div class="welcome-icon">👋</div>
+                <div class="welcome-text">
+                    <h2>Welcome, Oliver Brown! <span class="roofer-badge">RoofER Family</span></h2>
+                    <p>We truly appreciate you and everything you bring to the team. Remember, the RoofER family always has your back. Let's make today count!</p>
                 </div>
             </div>
         </div>
