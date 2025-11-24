@@ -2087,7 +2087,7 @@ HTML = """
             <div class="welcome-content">
                 <div class="welcome-icon" id="daily-icon">💼</div>
                 <div class="welcome-text">
-                    <h2 id="daily-greeting">Welcome, Oliver Brown! <span class="roofer-badge">RoofER CEO</span></h2>
+                    <h2 id="daily-greeting">Welcome, Oliver Brown! <span class="roofer-badge">RoofER Owner</span></h2>
                     <p id="daily-quote">Loading today's message...</p>
                 </div>
             </div>
@@ -2286,56 +2286,56 @@ HTML = """
         // Server TTS flag injected by Flask
         window.SERVER_TTS_ENABLED = {{ 'true' if server_tts else 'false' }};
 
-        // Daily CEO Motivation System
+        // Daily Owner Motivation System - Sports Focused
         const dailyQuotes = [
-            // Leadership & Vision
-            { icon: '🎯', greeting: 'Lead with Purpose', quote: 'Every great company was built on decisions made in moments like this. Trust your instincts, Oliver.' },
-            { icon: '👑', greeting: 'Executive Mindset', quote: 'As CEO, your clarity creates confidence across the entire organization. Stay sharp, stay focused.' },
-            { icon: '🚀', greeting: 'Built to Scale', quote: 'RoofER isn\'t just a company—it\'s a movement. Your vision is setting the standard for the industry.' },
-            { icon: '💡', greeting: 'Innovation Drives Success', quote: 'The best leaders don\'t wait for opportunities—they create them. Keep pushing boundaries.' },
-            { icon: '⚡', greeting: 'Execute with Excellence', quote: 'Strategy without execution is just a wish. Your ability to deliver separates good from legendary.' },
+            // Game Day Mentality
+            { icon: "🏈", greeting: "Fourth Quarter", quote: "Winners are made in the fourth quarter. Time to execute." },
+            { icon: "⚾", greeting: "At Bat", quote: "Step up to the plate. Control what you can control. Win your at-bats." },
+            { icon: "🏀", greeting: "Clutch Time", quote: "Great players demand the ball in crunch time. Make your shots count." },
+            { icon: "🥊", greeting: "Round by Round", quote: "Boxing is won round by round. So is business. Win today." },
+            { icon: "🏁", greeting: "Race Mode", quote: "The race is long. Stay focused on your lane. Finish first." },
 
-            // Market Intelligence
-            { icon: '📊', greeting: 'Data-Driven Decisions', quote: 'The markets reward those who see patterns others miss. Your dashboard gives you that edge—use it.' },
-            { icon: '💹', greeting: 'Market Mastery', quote: 'Bulls make money, bears make money, but pigs get slaughtered. Stay disciplined, stay profitable.' },
-            { icon: '🎲', greeting: 'Calculated Risk', quote: 'Every portfolio is a reflection of conviction. Your watchlist shows winners because you think like one.' },
-            { icon: '📈', greeting: 'Growth Mindset', quote: 'Stock portfolios grow with patience, companies grow with persistence. You\'re playing the long game right.' },
-            { icon: '💼', greeting: 'Business Intelligence', quote: 'Information is power, but applied intelligence is wealth. Keep studying, keep winning.' },
+            // Competition & Performance
+            { icon: "🎯", greeting: "Lock In", quote: "Distractions lose games. Lock in on what matters. Execute." },
+            { icon: "💪", greeting: "Training Day", quote: "Champions train when others rest. You show up. That's the difference." },
+            { icon: "🔥", greeting: "Heat Check", quote: "Momentum is real. RoofER has it. Keep pushing the advantage." },
+            { icon: "⚡", greeting: "Fast Break", quote: "Speed kills in sports and business. Move faster than the competition." },
+            { icon: "🏆", greeting: "Championship DNA", quote: "Championships are won in preparation. You put in the work." },
 
-            // Gratitude & Recognition
-            { icon: '🙏', greeting: 'Grateful Leadership', quote: 'Thank you for building something bigger than yourself. RoofER\'s success is a testament to your dedication.' },
-            { icon: '🌟', greeting: 'Impact Matters', quote: 'You\'re not just running a business—you\'re changing lives. Never underestimate your influence, Oliver.' },
-            { icon: '💪', greeting: 'Strength in Leadership', quote: 'The team looks to you because you\'ve proven you can deliver. That trust is earned, not given.' },
-            { icon: '🏆', greeting: 'Championship Caliber', quote: 'Champions aren\'t crowned—they\'re built through daily commitment. You show up every single day.' },
-            { icon: '❤️', greeting: 'Built on Values', quote: 'RoofER thrives because you lead with integrity. That foundation is unshakeable.' },
+            // Strategy & Execution
+            { icon: "♟️", greeting: "Next Move", quote: "Think three moves ahead. Your strategy separates you from the pack." },
+            { icon: "📊", greeting: "Film Study", quote: "Winners study the game. Your data is your film. Use it." },
+            { icon: "🎲", greeting: "Calculated Play", quote: "Smart risks win games. Stupid risks lose seasons. Know the difference." },
+            { icon: "🧭", greeting: "Game Plan", quote: "Stick to the game plan. Adjust when needed. Never panic." },
+            { icon: "⚙️", greeting: "System Check", quote: "Champions build systems. Your infrastructure wins games for you." },
 
-            // Sports Analogies
-            { icon: '🏈', greeting: 'Game Day Mentality', quote: 'Every day is the fourth quarter. Execute your plays, trust your team, and finish strong.' },
-            { icon: '⚾', greeting: 'Swing for Impact', quote: 'You don\'t need to hit a home run every time—just keep getting on base. Consistency wins championships.' },
-            { icon: '🏀', greeting: 'Clutch Performance', quote: 'The best players want the ball when the game is on the line. You\'re built for pressure moments.' },
-            { icon: '🎾', greeting: 'Point by Point', quote: 'Business is won one point at a time. Focus on today\'s serve—championship seasons follow.' },
-            { icon: '🥊', greeting: 'Fight Smart', quote: 'Boxing teaches patience and precision. Land your shots, protect your assets, stay in the ring.' },
+            // Team & Leadership
+            { icon: "🤝", greeting: "Team First", quote: "Great teams trust each other. RoofER Family backs you up." },
+            { icon: "🛡️", greeting: "Got Your Back", quote: "Your team protects you. You protect them. That's how dynasties work." },
+            { icon: "📣", greeting: "Captain Mode", quote: "Lead from the front. Your team follows your energy." },
+            { icon: "🌊", greeting: "Rising Tide", quote: "Lift your team up. Winning teams win together." },
+            { icon: "💼", greeting: "Owner Mentality", quote: "You own this. Act like it. That mindset changes everything." },
 
-            // Strategic Thinking
-            { icon: '♟️', greeting: 'Strategic Advantage', quote: 'Chess masters think five moves ahead. Your decisions today are setting up tomorrow\'s victories.' },
-            { icon: '🧭', greeting: 'Navigate with Confidence', quote: 'In uncertain markets, a steady hand at the wheel is priceless. You\'ve got this, Oliver.' },
-            { icon: '🔥', greeting: 'Momentum is Power', quote: 'Success breeds success. RoofER is on fire because you keep feeding the flame.' },
-            { icon: '⚙️', greeting: 'Systems Over Effort', quote: 'Smart CEOs build systems that work while they sleep. Your infrastructure is your competitive edge.' },
-            { icon: '🎯', greeting: 'Precision Execution', quote: 'Amateurs spray bullets, professionals take aim. Your focus creates results.' },
+            // Market & Money
+            { icon: "💹", greeting: "Market Watch", quote: "Bulls make money. Bears make money. Pigs get slaughtered. Stay sharp." },
+            { icon: "📈", greeting: "Upside Play", quote: "Your portfolio reflects your conviction. Back your winners." },
+            { icon: "💰", greeting: "Capital Moves", quote: "Money follows performance. Perform and the money comes." },
+            { icon: "⏰", greeting: "Prime Time", quote: "Your time is your most valuable asset. Invest it wisely." },
+            { icon: "🎖️", greeting: "Earned Respect", quote: "Respect is earned through results. You earn yours daily." },
 
-            // Team & Culture
-            { icon: '🤝', greeting: 'United We Rise', quote: 'RoofER Family isn\'t just a motto—it\'s a culture you built from day one. That loyalty is your moat.' },
-            { icon: '🌊', greeting: 'Rising Tide', quote: 'Great leaders lift everyone around them. Your team wins because you teach them how.' },
-            { icon: '🛡️', greeting: 'Protected & Supported', quote: 'You\'ve got RoofER\'s back, and they\'ve got yours. That mutual trust is what builds dynasties.' },
-            { icon: '🔨', greeting: 'Build Something Lasting', quote: 'Legacy isn\'t what you achieve—it\'s what you leave behind. You\'re building something permanent.' },
-            { icon: '🌅', greeting: 'New Day, New Wins', quote: 'Every sunrise is a fresh opportunity to dominate. Let\'s make today legendary.' },
+            // Intensity & Focus
+            { icon: "🔨", greeting: "Grind Mode", quote: "Building something real takes relentless effort. Keep hammering." },
+            { icon: "🎾", greeting: "Point by Point", quote: "Win the point in front of you. Championships follow." },
+            { icon: "🏋️", greeting: "Weight Room", quote: "Strength compounds daily. So does your business." },
+            { icon: "🚀", greeting: "Launch Ready", quote: "RoofER is positioned to dominate. Time to take off." },
+            { icon: "⚔️", greeting: "Battle Ready", quote: "Competition never sleeps. Neither should your edge." },
 
-            // Financial Wisdom
-            { icon: '💰', greeting: 'Capital Allocation', quote: 'The best investment you make is in yourself and your business. Both are compounding daily.' },
-            { icon: '📱', greeting: 'Real-Time Intelligence', quote: 'This dashboard isn\'t just data—it\'s your edge. Use it to stay three steps ahead.' },
-            { icon: '🧠', greeting: 'Think Like an Owner', quote: 'You don\'t work for RoofER—you own it. That ownership mentality changes everything.' },
-            { icon: '⏰', greeting: 'Time is Leverage', quote: 'Every minute you invest in strategic thinking pays dividends. Your time is RoofER\'s most valuable asset.' },
-            { icon: '🎖️', greeting: 'Earned, Not Given', quote: 'Respect in this industry isn\'t handed out—it\'s earned through results. You\'ve earned yours.' }
+            // Execution & Results
+            { icon: "✅", greeting: "Execute", quote: "Plans are worthless without execution. Make it happen today." },
+            { icon: "🌅", greeting: "Day One", quote: "Every morning is game day. Come ready to compete." },
+            { icon: "📱", greeting: "Live Feed", quote: "Real-time data. Real-time decisions. That's your advantage." },
+            { icon: "🧠", greeting: "Mental Edge", quote: "The mental game separates good from great. Stay focused." },
+            { icon: "🎪", greeting: "Show Time", quote: "This is your stage. Perform like you own it. Because you do." }
         ];
 
         // Get quote of the day based on current date
@@ -2350,7 +2350,7 @@ HTML = """
         function updateDailyMotivation() {
             const dailyContent = getDailyQuote();
             document.getElementById('daily-icon').textContent = dailyContent.icon;
-            document.getElementById('daily-greeting').innerHTML = `${dailyContent.greeting}, Oliver! <span class="roofer-badge">RoofER CEO</span>`;
+            document.getElementById('daily-greeting').innerHTML = `${dailyContent.greeting}, Oliver! <span class="roofer-badge">RoofER Owner</span>`;
             document.getElementById('daily-quote').textContent = dailyContent.quote;
         }
 
