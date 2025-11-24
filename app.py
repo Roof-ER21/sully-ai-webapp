@@ -2082,13 +2082,13 @@ HTML = """
             </div>
         </div>
 
-        <!-- Welcome Message for Oliver Brown -->
+        <!-- Daily Motivation for Oliver Brown -->
         <div class="welcome-banner">
             <div class="welcome-content">
-                <div class="welcome-icon">👋</div>
+                <div class="welcome-icon" id="daily-icon">💼</div>
                 <div class="welcome-text">
-                    <h2>Welcome, Oliver Brown! <span class="roofer-badge">RoofER Family</span></h2>
-                    <p>We truly appreciate you and everything you bring to the team. Remember, the RoofER family always has your back. Let's make today count!</p>
+                    <h2 id="daily-greeting">Welcome, Oliver Brown! <span class="roofer-badge">RoofER CEO</span></h2>
+                    <p id="daily-quote">Loading today's message...</p>
                 </div>
             </div>
         </div>
@@ -2285,6 +2285,74 @@ HTML = """
     <script>
         // Server TTS flag injected by Flask
         window.SERVER_TTS_ENABLED = {{ 'true' if server_tts else 'false' }};
+
+        // Daily CEO Motivation System
+        const dailyQuotes = [
+            // Leadership & Vision
+            { icon: '🎯', greeting: 'Lead with Purpose', quote: 'Every great company was built on decisions made in moments like this. Trust your instincts, Oliver.' },
+            { icon: '👑', greeting: 'Executive Mindset', quote: 'As CEO, your clarity creates confidence across the entire organization. Stay sharp, stay focused.' },
+            { icon: '🚀', greeting: 'Built to Scale', quote: 'RoofER isn\'t just a company—it\'s a movement. Your vision is setting the standard for the industry.' },
+            { icon: '💡', greeting: 'Innovation Drives Success', quote: 'The best leaders don\'t wait for opportunities—they create them. Keep pushing boundaries.' },
+            { icon: '⚡', greeting: 'Execute with Excellence', quote: 'Strategy without execution is just a wish. Your ability to deliver separates good from legendary.' },
+
+            // Market Intelligence
+            { icon: '📊', greeting: 'Data-Driven Decisions', quote: 'The markets reward those who see patterns others miss. Your dashboard gives you that edge—use it.' },
+            { icon: '💹', greeting: 'Market Mastery', quote: 'Bulls make money, bears make money, but pigs get slaughtered. Stay disciplined, stay profitable.' },
+            { icon: '🎲', greeting: 'Calculated Risk', quote: 'Every portfolio is a reflection of conviction. Your watchlist shows winners because you think like one.' },
+            { icon: '📈', greeting: 'Growth Mindset', quote: 'Stock portfolios grow with patience, companies grow with persistence. You\'re playing the long game right.' },
+            { icon: '💼', greeting: 'Business Intelligence', quote: 'Information is power, but applied intelligence is wealth. Keep studying, keep winning.' },
+
+            // Gratitude & Recognition
+            { icon: '🙏', greeting: 'Grateful Leadership', quote: 'Thank you for building something bigger than yourself. RoofER\'s success is a testament to your dedication.' },
+            { icon: '🌟', greeting: 'Impact Matters', quote: 'You\'re not just running a business—you\'re changing lives. Never underestimate your influence, Oliver.' },
+            { icon: '💪', greeting: 'Strength in Leadership', quote: 'The team looks to you because you\'ve proven you can deliver. That trust is earned, not given.' },
+            { icon: '🏆', greeting: 'Championship Caliber', quote: 'Champions aren\'t crowned—they\'re built through daily commitment. You show up every single day.' },
+            { icon: '❤️', greeting: 'Built on Values', quote: 'RoofER thrives because you lead with integrity. That foundation is unshakeable.' },
+
+            // Sports Analogies
+            { icon: '🏈', greeting: 'Game Day Mentality', quote: 'Every day is the fourth quarter. Execute your plays, trust your team, and finish strong.' },
+            { icon: '⚾', greeting: 'Swing for Impact', quote: 'You don\'t need to hit a home run every time—just keep getting on base. Consistency wins championships.' },
+            { icon: '🏀', greeting: 'Clutch Performance', quote: 'The best players want the ball when the game is on the line. You\'re built for pressure moments.' },
+            { icon: '🎾', greeting: 'Point by Point', quote: 'Business is won one point at a time. Focus on today\'s serve—championship seasons follow.' },
+            { icon: '🥊', greeting: 'Fight Smart', quote: 'Boxing teaches patience and precision. Land your shots, protect your assets, stay in the ring.' },
+
+            // Strategic Thinking
+            { icon: '♟️', greeting: 'Strategic Advantage', quote: 'Chess masters think five moves ahead. Your decisions today are setting up tomorrow\'s victories.' },
+            { icon: '🧭', greeting: 'Navigate with Confidence', quote: 'In uncertain markets, a steady hand at the wheel is priceless. You\'ve got this, Oliver.' },
+            { icon: '🔥', greeting: 'Momentum is Power', quote: 'Success breeds success. RoofER is on fire because you keep feeding the flame.' },
+            { icon: '⚙️', greeting: 'Systems Over Effort', quote: 'Smart CEOs build systems that work while they sleep. Your infrastructure is your competitive edge.' },
+            { icon: '🎯', greeting: 'Precision Execution', quote: 'Amateurs spray bullets, professionals take aim. Your focus creates results.' },
+
+            // Team & Culture
+            { icon: '🤝', greeting: 'United We Rise', quote: 'RoofER Family isn\'t just a motto—it\'s a culture you built from day one. That loyalty is your moat.' },
+            { icon: '🌊', greeting: 'Rising Tide', quote: 'Great leaders lift everyone around them. Your team wins because you teach them how.' },
+            { icon: '🛡️', greeting: 'Protected & Supported', quote: 'You\'ve got RoofER\'s back, and they\'ve got yours. That mutual trust is what builds dynasties.' },
+            { icon: '🔨', greeting: 'Build Something Lasting', quote: 'Legacy isn\'t what you achieve—it\'s what you leave behind. You\'re building something permanent.' },
+            { icon: '🌅', greeting: 'New Day, New Wins', quote: 'Every sunrise is a fresh opportunity to dominate. Let\'s make today legendary.' },
+
+            // Financial Wisdom
+            { icon: '💰', greeting: 'Capital Allocation', quote: 'The best investment you make is in yourself and your business. Both are compounding daily.' },
+            { icon: '📱', greeting: 'Real-Time Intelligence', quote: 'This dashboard isn\'t just data—it\'s your edge. Use it to stay three steps ahead.' },
+            { icon: '🧠', greeting: 'Think Like an Owner', quote: 'You don\'t work for RoofER—you own it. That ownership mentality changes everything.' },
+            { icon: '⏰', greeting: 'Time is Leverage', quote: 'Every minute you invest in strategic thinking pays dividends. Your time is RoofER\'s most valuable asset.' },
+            { icon: '🎖️', greeting: 'Earned, Not Given', quote: 'Respect in this industry isn\'t handed out—it\'s earned through results. You\'ve earned yours.' }
+        ];
+
+        // Get quote of the day based on current date
+        function getDailyQuote() {
+            const today = new Date();
+            const dayOfYear = Math.floor((today - new Date(today.getFullYear(), 0, 0)) / 1000 / 60 / 60 / 24);
+            const quoteIndex = dayOfYear % dailyQuotes.length;
+            return dailyQuotes[quoteIndex];
+        }
+
+        // Update welcome banner with daily quote
+        function updateDailyMotivation() {
+            const dailyContent = getDailyQuote();
+            document.getElementById('daily-icon').textContent = dailyContent.icon;
+            document.getElementById('daily-greeting').innerHTML = `${dailyContent.greeting}, Oliver! <span class="roofer-badge">RoofER CEO</span>`;
+            document.getElementById('daily-quote').textContent = dailyContent.quote;
+        }
 
         // Dashboard Stock Data Management
         let stockData = {};
@@ -2641,6 +2709,7 @@ HTML = """
 
         // Load data on page load
         window.addEventListener('DOMContentLoaded', () => {
+            updateDailyMotivation();  // Load today's CEO message
             loadStockData();
             loadInsights();
 
