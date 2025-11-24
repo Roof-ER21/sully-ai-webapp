@@ -3083,7 +3083,16 @@ HTML = """
         }
 
         function fallbackToWebSpeech(text) {
-            if (!window.speechSynthesis) return;
+            if (!window.speechSynthesis) {
+                console.warn('Speech synthesis not supported');
+                return;
+            }
+
+            // Limit text length for browser TTS (some browsers have limits)
+            if (text.length > 1000) {
+                text = text.substring(0, 1000) + '...';
+                console.log('Truncated text to 1000 chars for TTS');
+            }
 
             // Use browser's speech synthesis with optimized settings for natural sound
             window.speechSynthesis.cancel();
@@ -3091,35 +3100,53 @@ HTML = """
             const utterance = new SpeechSynthesisUtterance(text);
 
             // Optimized settings for natural, confident male voice
-            // Slightly slower = more natural and authoritative
             utterance.rate = 0.95;      // Slightly slower than default (more natural)
-            utterance.pitch = 0.85;     // Deeper pitch (more masculine, like Elon/Trump)
+            utterance.pitch = 0.85;     // Deeper pitch (more masculine)
             utterance.volume = 1.0;     // Full volume
             utterance.lang = 'en-US';
 
-            // Automatically select best natural male voice
+            // Try to select best natural male voice
             const voice = getBestMaleUsVoice();
             if (voice) {
                 utterance.voice = voice;
-                console.log('Using voice:', voice.name, '| Rate:', utterance.rate, '| Pitch:', utterance.pitch);
+                console.log('Using voice:', voice.name);
+            } else {
+                console.log('Using default system voice');
             }
 
             // Handle speech end
             utterance.onend = () => {
+                console.log('Speech ended successfully');
                 isSpeaking = false;
                 const stopBtn = document.getElementById('stop-btn');
                 if (stopBtn) stopBtn.style.display = 'none';
             };
 
-            // Handle speech error
+            // Handle speech error with detailed logging
             utterance.onerror = (e) => {
-                console.warn('Speech synthesis error:', e);
+                console.error('Speech error:', e.error, 'Type:', e.type, 'Char index:', e.charIndex);
                 isSpeaking = false;
                 const stopBtn = document.getElementById('stop-btn');
                 if (stopBtn) stopBtn.style.display = 'none';
+
+                // Show user-friendly error
+                if (e.error === 'not-allowed') {
+                    console.warn('Speech blocked by browser. User needs to interact with page first.');
+                } else if (e.error === 'network') {
+                    console.warn('Speech failed due to network issue');
+                }
             };
 
-            window.speechSynthesis.speak(utterance);
+            // Start speaking
+            try {
+                window.speechSynthesis.speak(utterance);
+                console.log('Speech started, text length:', text.length);
+            } catch (err) {
+                console.error('Failed to start speech:', err);
+                isSpeaking = false;
+                const stopBtn = document.getElementById('stop-btn');
+                if (stopBtn) stopBtn.style.display = 'none';
+            }
         }
 
         // Load voices (needed for some browsers)
